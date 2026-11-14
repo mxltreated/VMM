@@ -59,6 +59,10 @@ export function MultiplayerView({ activeProfile, onError }: MultiplayerViewProps
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [busyServer, setBusyServer] = useState(false);
   const [savingConfig, setSavingConfig] = useState(false);
+  const [rawMode, setRawMode] = useState(false);
+  const [rawConfigText, setRawConfigText] = useState('');
+  const [loadingRaw, setLoadingRaw] = useState(false);
+  const [configSaved, setConfigSaved] = useState(false);
   const logEndRef = useRef<HTMLDivElement | null>(null);
 
   const refreshAll = useCallback(async () => {
@@ -211,10 +215,40 @@ export function MultiplayerView({ activeProfile, onError }: MultiplayerViewProps
     }
   };
 
+  const handleToggleRawMode = async () => {
+    if (rawMode) {
+      setRawMode(false);
+      return;
+    }
+    setLoadingRaw(true);
+    try {
+      const raw = await api.getServerConfigRaw();
+      setRawConfigText(raw);
+      setRawMode(true);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoadingRaw(false);
+    }
+  };
+
   const handleSaveConfig = async () => {
     setSavingConfig(true);
     try {
-      await api.saveServerConfig(serverConfig);
+      if (rawMode) {
+        const updated = await api.saveServerConfigRaw(rawConfigText);
+        setServerConfig(updated);
+      } else {
+        const normalized = {
+          ...serverConfig,
+          port: serverConfig.port > 0 ? serverConfig.port : 42420,
+          maxClients: serverConfig.maxClients > 0 ? serverConfig.maxClients : 16,
+        };
+        setServerConfig(normalized);
+        await api.saveServerConfig(normalized);
+      }
+      setConfigSaved(true);
+      setTimeout(() => setConfigSaved(false), 2000);
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -419,17 +453,41 @@ export function MultiplayerView({ activeProfile, onError }: MultiplayerViewProps
                 <Server className="w-4 h-4 text-amber-400" />
                 <h3 className="text-sm font-semibold text-zinc-100">Server Settings</h3>
               </div>
-              <span
-                className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${
-                  serverStatus.running
-                    ? 'bg-emerald-500/15 text-emerald-300'
-                    : 'bg-zinc-800 text-zinc-400'
-                }`}
-              >
-                {serverStatus.running ? `Running (PID ${serverStatus.pid})` : 'Stopped'}
-              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleToggleRawMode}
+                  disabled={loadingRaw}
+                  className="px-2 py-0.5 rounded-md bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.08] text-[11px] text-zinc-300 cursor-pointer disabled:opacity-50"
+                >
+                  {loadingRaw ? 'Loading...' : rawMode ? 'Form View' : 'Edit Raw JSON'}
+                </button>
+                <span
+                  className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${
+                    serverStatus.running
+                      ? 'bg-emerald-500/15 text-emerald-300'
+                      : 'bg-zinc-800 text-zinc-400'
+                  }`}
+                >
+                  {serverStatus.running ? `Running (PID ${serverStatus.pid})` : 'Stopped'}
+                </span>
+              </div>
             </div>
 
+            {rawMode ? (
+              <div className="space-y-2">
+                <div className="text-[11px] text-zinc-400">
+                  Editing <code className="text-zinc-300">serverconfig.json</code> directly
+                </div>
+                <textarea
+                  value={rawConfigText}
+                  onChange={(e) => setRawConfigText(e.target.value)}
+                  spellCheck={false}
+                  rows={12}
+                  className="w-full bg-[#0b0d12] border border-white/[0.08] rounded-lg p-3 font-mono text-[11px] text-zinc-200 focus:outline-none focus:border-amber-500/40 resize-y"
+                />
+              </div>
+            ) : (
             <div className="space-y-3">
               <div>
                 <label className="block text-zinc-400 mb-1">Server Name</label>
@@ -448,11 +506,19 @@ export function MultiplayerView({ activeProfile, onError }: MultiplayerViewProps
                   <label className="block text-zinc-400 mb-1">Local Port</label>
                   <input
                     type="number"
-                    value={serverConfig.port}
+                    min={1}
+                    max={65535}
+                    value={serverConfig.port || ''}
                     onChange={(e) =>
                       setServerConfig((c) => ({
                         ...c,
-                        port: Number(e.target.value) || 42420,
+                        port: e.target.value === '' ? 0 : Number(e.target.value),
+                      }))
+                    }
+                    onBlur={() =>
+                      setServerConfig((c) => ({
+                        ...c,
+                        port: c.port > 0 ? c.port : 42420,
                       }))
                     }
                     className="w-full bg-[#0e1015] border border-white/[0.08] rounded-lg px-3 py-2 text-zinc-200 focus:outline-none focus:border-amber-500/40"
@@ -462,11 +528,19 @@ export function MultiplayerView({ activeProfile, onError }: MultiplayerViewProps
                   <label className="block text-zinc-400 mb-1">Max Players</label>
                   <input
                     type="number"
-                    value={serverConfig.maxClients}
+                    min={1}
+                    max={256}
+                    value={serverConfig.maxClients || ''}
                     onChange={(e) =>
                       setServerConfig((c) => ({
                         ...c,
-                        maxClients: Number(e.target.value) || 16,
+                        maxClients: e.target.value === '' ? 0 : Number(e.target.value),
+                      }))
+                    }
+                    onBlur={() =>
+                      setServerConfig((c) => ({
+                        ...c,
+                        maxClients: c.maxClients > 0 ? c.maxClients : 16,
                       }))
                     }
                     className="w-full bg-[#0e1015] border border-white/[0.08] rounded-lg px-3 py-2 text-zinc-200 focus:outline-none focus:border-amber-500/40"
@@ -487,18 +561,39 @@ export function MultiplayerView({ activeProfile, onError }: MultiplayerViewProps
                 />
               </div>
 
-              <label className="flex items-center gap-2 text-zinc-300 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={serverConfig.allowPvp}
-                  onChange={(e) =>
-                    setServerConfig((c) => ({ ...c, allowPvp: e.target.checked }))
-                  }
-                  className="accent-amber-500"
-                />
-                <span>Allow PvP</span>
-              </label>
+              <div className="grid grid-cols-2 gap-3 items-center">
+                <div>
+                  <label className="block text-zinc-400 mb-1">Whitelist Mode</label>
+                  <select
+                    value={serverConfig.whitelistMode}
+                    onChange={(e) =>
+                      setServerConfig((c) => ({
+                        ...c,
+                        whitelistMode: Number(e.target.value),
+                      }))
+                    }
+                    className="w-full bg-[#0e1015] border border-white/[0.08] rounded-lg px-3 py-2 text-zinc-200 focus:outline-none focus:border-amber-500/40"
+                  >
+                    <option value={0}>Off (Open)</option>
+                    <option value={1}>On (Whitelist Only)</option>
+                    <option value={2}>Default</option>
+                  </select>
+                </div>
+
+                <label className="flex items-center gap-2 text-zinc-300 cursor-pointer pt-5">
+                  <input
+                    type="checkbox"
+                    checked={serverConfig.allowPvp}
+                    onChange={(e) =>
+                      setServerConfig((c) => ({ ...c, allowPvp: e.target.checked }))
+                    }
+                    className="accent-amber-500"
+                  />
+                  <span>Allow PvP</span>
+                </label>
+              </div>
             </div>
+            )}
 
             <div className="flex items-center gap-2 pt-2">
               <button
@@ -506,7 +601,7 @@ export function MultiplayerView({ activeProfile, onError }: MultiplayerViewProps
                 disabled={savingConfig}
                 className="px-3 py-2 rounded-lg bg-white/[0.06] hover:bg-white/[0.1] text-zinc-200 font-medium cursor-pointer"
               >
-                {savingConfig ? 'Saving...' : 'Save Config'}
+                {savingConfig ? 'Saving...' : configSaved ? 'Saved ✓' : 'Save Config'}
               </button>
               {serverStatus.running ? (
                 <button

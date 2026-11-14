@@ -375,9 +375,9 @@ export function SettingsView({
                   )}
                   <span>
                     {installingAppUpdate
-                      ? 'Downloading Installer...'
+                      ? 'Installing & Restarting...'
                       : appUpdateInfo.downloadUrl
-                        ? `Install v${appUpdateInfo.latestVersion}`
+                        ? `Update & Restart (v${appUpdateInfo.latestVersion})`
                         : `Download v${appUpdateInfo.latestVersion}`}
                   </span>
                 </button>

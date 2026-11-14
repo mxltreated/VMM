@@ -192,6 +192,47 @@ pub fn save_server_config(
         .map_err(|e| format!("Failed to write serverconfig.json: {e}"))
 }
 
+pub fn load_server_config_raw(
+    server_data_path: &Path,
+    exe_path: Option<&str>,
+) -> Result<String, String> {
+    fs::create_dir_all(server_data_path)
+        .map_err(|e| format!("Failed to create server data directory: {e}"))?;
+    ensure_server_config_exists(server_data_path, exe_path)?;
+
+    let cfg_path = server_data_path.join("serverconfig.json");
+    if !cfg_path.is_file() {
+        let default_cfg = json!({
+            "ServerName": "Vintage Story Server",
+            "Port": 42420,
+            "MaxClients": 16,
+            "Password": null,
+            "AllowPvP": true,
+            "WhitelistMode": 0
+        });
+        let formatted = serde_json::to_string_pretty(&default_cfg)
+            .map_err(|e| format!("Failed to serialize default serverconfig.json: {e}"))?;
+        fs::write(&cfg_path, &formatted)
+            .map_err(|e| format!("Failed to write serverconfig.json: {e}"))?;
+        return Ok(formatted);
+    }
+
+    fs::read_to_string(&cfg_path)
+        .map_err(|e| format!("Failed to read serverconfig.json: {e}"))
+}
+
+pub fn save_server_config_raw(server_data_path: &Path, raw: &str) -> Result<(), String> {
+    let val: Value = serde_json::from_str(raw)
+        .map_err(|e| format!("Invalid JSON in serverconfig.json: {e}"))?;
+    let formatted = serde_json::to_string_pretty(&val)
+        .map_err(|e| format!("Failed to format serverconfig.json: {e}"))?;
+    fs::create_dir_all(server_data_path)
+        .map_err(|e| format!("Failed to create server data directory: {e}"))?;
+    let cfg_path = server_data_path.join("serverconfig.json");
+    fs::write(&cfg_path, formatted)
+        .map_err(|e| format!("Failed to write serverconfig.json: {e}"))
+}
+
 struct RunningServer {
     child: Child,
     stdin: Option<ChildStdin>,

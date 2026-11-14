@@ -139,19 +139,23 @@ pub async fn check_github_app_update(repo: &str) -> Result<AppUpdateInfo, String
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
-    let mut download_url = None;
+    let mut exe_url = None;
+    let mut msi_url = None;
     if let Some(assets) = json.get("assets").and_then(|v| v.as_array()) {
         for asset in assets {
             let name = asset.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            if name.ends_with(".exe") || name.ends_with(".msi") {
-                download_url = asset
-                    .get("browser_download_url")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
-                break;
+            let dl = asset
+                .get("browser_download_url")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            if name.ends_with(".exe") && exe_url.is_none() {
+                exe_url = dl;
+            } else if name.ends_with(".msi") && msi_url.is_none() {
+                msi_url = dl;
             }
         }
     }
+    let download_url = exe_url.or(msi_url);
 
     Ok(AppUpdateInfo {
         current_version: current,
@@ -201,16 +205,72 @@ pub async fn download_and_launch_installer(url: &str) -> Result<(), String> {
 
     #[cfg(windows)]
     {
-        if filename.ends_with(".msi") {
-            std::process::Command::new("msiexec")
-                .args(["/i", &dest.to_string_lossy()])
-                .spawn()
-                .map_err(|e| format!("Failed to launch MSI installer: {e}"))?;
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+        let ps_quote = |s: &str| s.replace('\'', "''");
+        let pid = std::process::id();
+        let current_exe = std::env::current_exe().ok();
+        let install_dir = current_exe.as_deref().and_then(|p| p.parent()).filter(|dir| {
+            let s = dir.to_string_lossy().to_ascii_lowercase();
+            !s.ends_with(r"\target\debug") && !s.ends_with(r"\target\release")
+        });
+
+        let dest_str = dest.to_string_lossy();
+        let install_cmd = if filename.ends_with(".msi") {
+            let args = format!("/i \"{dest_str}\" /qn /norestart");
+            format!(
+                "$p = Start-Process -FilePath 'msiexec.exe' -ArgumentList '{}' -Wait -PassThru",
+                ps_quote(&args)
+            )
         } else {
-            std::process::Command::new(&dest)
-                .spawn()
-                .map_err(|e| format!("Failed to launch installer: {e}"))?;
-        }
+            let args = match install_dir {
+                Some(dir) => format!("/S /D={}", dir.display()),
+                None => "/S".to_string(),
+            };
+            format!(
+                "$p = Start-Process -FilePath '{}' -ArgumentList '{}' -Wait -PassThru",
+                ps_quote(&dest_str),
+                ps_quote(&args)
+            )
+        };
+
+        let relaunch_cmd = match current_exe.as_deref() {
+            Some(exe) => {
+                let exe_q = ps_quote(&exe.to_string_lossy());
+                format!("if (Test-Path -LiteralPath '{exe_q}') {{ Start-Process -FilePath '{exe_q}' }}")
+            }
+            None => String::new(),
+        };
+
+        let script = format!(
+            "$ErrorActionPreference = 'SilentlyContinue'\r\n\
+             Wait-Process -Id {pid} -Timeout 15\r\n\
+             Start-Sleep -Milliseconds 300\r\n\
+             {install_cmd}\r\n\
+             if ($p.ExitCode -eq 0) {{ Remove-Item -LiteralPath '{}' -Force }}\r\n\
+             {relaunch_cmd}\r\n\
+             Remove-Item -LiteralPath $PSCommandPath -Force\r\n",
+            ps_quote(&dest_str)
+        );
+
+        let script_path = std::env::temp_dir().join("vmm-update.ps1");
+        fs::write(&script_path, script)
+            .map_err(|e| format!("Failed to write update helper script: {e}"))?;
+
+        std::process::Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-WindowStyle",
+                "Hidden",
+                "-File",
+                &script_path.to_string_lossy(),
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|e| format!("Failed to launch update helper: {e}"))?;
     }
 
     Ok(())

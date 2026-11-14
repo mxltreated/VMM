@@ -174,6 +174,15 @@ export const api = {
       summary,
       customDataPath: customDataPath ?? null,
     }),
+  getServerConfigRaw: (customDataPath?: string | null) =>
+    invoke<string>('get_server_config_raw', {
+      customDataPath: customDataPath ?? null,
+    }),
+  saveServerConfigRaw: (raw: string, customDataPath?: string | null) =>
+    invoke<ServerConfigSummary>('save_server_config_raw_cmd', {
+      raw,
+      customDataPath: customDataPath ?? null,
+    }),
   startDedicatedServer: (params: {
     port: number;
     maxClients: number;

@@ -70,6 +70,8 @@ pub fn run() {
             commands::get_server_logs,
             commands::get_server_config,
             commands::save_server_config_cmd,
+            commands::get_server_config_raw,
+            commands::save_server_config_raw_cmd,
             commands::start_dedicated_server,
             commands::stop_dedicated_server,
             commands::send_server_command,

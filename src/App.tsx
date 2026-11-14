@@ -384,7 +384,7 @@ export function App() {
                 className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-semibold cursor-pointer disabled:opacity-50"
               >
                 {installingUpdate && <Loader2 className="w-3 h-3 animate-spin" />}
-                <span>{installingUpdate ? 'Downloading...' : 'Install Update'}</span>
+                <span>{installingUpdate ? 'Installing & Restarting...' : 'Update & Restart'}</span>
               </button>
               <button
                 onClick={() => setAppUpdate(null)}
@@ -488,7 +488,7 @@ export function App() {
         </main>
 
         <footer className="h-7 shrink-0 border-t border-white/[0.04] bg-[#0e1015]/90 px-6 flex items-center justify-between text-[11px] text-zinc-600 select-none">
-          <span>Vintage Mod Manager (VMM) • v1.1.2</span>
+          <span>Vintage Mod Manager (VMM) • v1.1.5</span>
           <span>Modpack Sharing &amp; Encrypted P2P Multiplayer</span>
         </footer>
       </div>
