@@ -190,17 +190,12 @@ export interface ModpackImportResult {
   restoredConfigs: number;
 }
 
-export interface NetworkEndpoint {
-  kind: 'tailscale' | 'zerotier' | 'radmin' | 'lan';
-  label: string;
-  ip: string;
-  interfaceName: string;
-}
-
-export interface FirewallStatus {
-  rulePresent: boolean;
-  port: number;
-  details: string;
+export interface P2pStatus {
+  active: boolean;
+  mode: 'idle' | 'host' | 'client';
+  roomCode: string | null;
+  localAddress: string | null;
+  connectedPeers: number;
 }
 
 export interface ServerConfigSummary {

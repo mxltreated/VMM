@@ -488,8 +488,8 @@ export function App() {
         </main>
 
         <footer className="h-7 shrink-0 border-t border-white/[0.04] bg-[#0e1015]/90 px-6 flex items-center justify-between text-[11px] text-zinc-600 select-none">
-          <span>Vintage Mod Manager (VMM) • v1.1</span>
-          <span>Modpack Sharing &amp; Mesh VPN Multiplayer</span>
+          <span>Vintage Mod Manager (VMM) • v1.1.2</span>
+          <span>Modpack Sharing &amp; Encrypted P2P Multiplayer</span>
         </footer>
       </div>
 

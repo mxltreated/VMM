@@ -29,8 +29,8 @@ const TAB_TITLES: Record<NavTab, { title: string; subtitle: string }> = {
     subtitle: 'Switch between curated mod sets or share modpacks with friends',
   },
   multiplayer: {
-    title: 'Multiplayer & LAN',
-    subtitle: 'Host a dedicated or LAN server and invite friends over Mesh VPN',
+    title: 'Multiplayer & P2P',
+    subtitle: 'Host or join a zero-download, encrypted peer-to-peer Vintage Story room',
   },
   settings: {
     title: 'Settings',

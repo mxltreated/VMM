@@ -1,8 +1,8 @@
 use crate::models::{
-    AppSettings, AppUpdateInfo, DetectedPaths, FirewallStatus, GameStatus, LocalMod,
-    ModConfigFile, ModDbDetail, ModDbFilters, ModDbSummary, ModProfile, ModpackImportPreview,
-    ModpackImportResult, ModpackManifest, NetworkEndpoint, ProfileSettings, ServerConfigSummary,
-    ServerLogEvent, ServerStatus,
+    AppSettings, AppUpdateInfo, DetectedPaths, GameStatus, LocalMod, ModConfigFile, ModDbDetail,
+    ModDbFilters, ModDbSummary, ModProfile, ModpackImportPreview, ModpackImportResult,
+    ModpackManifest, P2pStatus, ProfileSettings, ServerConfigSummary, ServerLogEvent,
+    ServerStatus,
 };
 use crate::services::downloader::download_mod_file;
 use crate::services::launcher::GameLauncher;
@@ -20,10 +20,8 @@ use crate::services::modpack::{
     encode_share_code, export_modpack_file as svc_export_modpack_file,
     preview_modpack_import as svc_preview_modpack_import,
 };
-use crate::services::multiplayer::{
-    add_firewall_rule as svc_add_firewall_rule, check_firewall_rule as svc_check_firewall_rule,
-    detect_network_endpoints as svc_detect_network_endpoints, join_server as svc_join_server,
-};
+use crate::services::multiplayer::join_server as svc_join_server;
+use crate::services::p2p::P2pManager;
 use crate::services::profiles::{
     create_profile as svc_create_profile, delete_profile as svc_delete_profile, load_profiles,
     rename_profile as svc_rename_profile, snapshot_profile_versions as svc_snapshot_profile_versions,
@@ -31,8 +29,8 @@ use crate::services::profiles::{
     update_profile_settings as svc_update_profile_settings,
 };
 use crate::services::server::{
-    default_server_data_path, detect_server_exe, load_server_config, save_server_config,
-    ServerManager,
+    default_server_data_path, detect_server_exe, ensure_server_config_exists, load_server_config,
+    save_server_config, ServerManager,
 };
 use crate::services::settings::{
     check_github_app_update, detect_vintage_story_paths, download_and_launch_installer,
@@ -47,6 +45,7 @@ pub struct AppState {
     pub moddb: ModDbClient,
     pub launcher: GameLauncher,
     pub server: ServerManager,
+    pub p2p: P2pManager,
 }
 
 fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -478,21 +477,44 @@ pub async fn apply_modpack_import(
     Ok(res)
 }
 
-// --- Multiplayer & Server Commands ---
+// --- Multiplayer, P2P & Server Commands ---
 
 #[tauri::command]
-pub fn detect_network_endpoints() -> Vec<NetworkEndpoint> {
-    svc_detect_network_endpoints()
+pub fn get_p2p_status(state: State<'_, AppState>) -> P2pStatus {
+    state.p2p.status()
 }
 
 #[tauri::command]
-pub fn check_firewall_rule(port: u16) -> FirewallStatus {
-    svc_check_firewall_rule(port)
+pub async fn start_p2p_host(
+    state: State<'_, AppState>,
+    target_port: u16,
+) -> Result<P2pStatus, String> {
+    state.p2p.start_host(target_port).await
 }
 
 #[tauri::command]
-pub fn add_firewall_rule(port: u16) -> Result<FirewallStatus, String> {
-    svc_add_firewall_rule(port)
+pub async fn join_p2p_room(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    room_code: String,
+    preferred_port: Option<u16>,
+    launch_game: bool,
+) -> Result<P2pStatus, String> {
+    let status = state
+        .p2p
+        .start_client(&room_code, preferred_port.unwrap_or(42420))
+        .await?;
+    if launch_game {
+        if let Some(addr) = &status.local_address {
+            join_server(app, state, addr.clone())?;
+        }
+    }
+    Ok(status)
+}
+
+#[tauri::command]
+pub fn stop_p2p(state: State<'_, AppState>) -> P2pStatus {
+    state.p2p.stop()
 }
 
 #[tauri::command]
@@ -571,12 +593,13 @@ pub fn save_server_config_cmd(
     custom_data_path: Option<String>,
 ) -> Result<(), String> {
     let cfg = config_dir(&app)?;
-    let (_, dp) = require_data_path(&cfg)?;
+    let (settings, dp) = require_data_path(&cfg)?;
     let srv_dp = custom_data_path
         .filter(|s| !s.trim().is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| default_server_data_path(&dp));
-    save_server_config(&srv_dp, &summary)
+    let exe_path = detect_server_exe(settings.game_exe_path.as_deref());
+    save_server_config(&srv_dp, &summary, exe_path.as_deref())
 }
 
 #[tauri::command]
@@ -598,6 +621,7 @@ pub fn start_dedicated_server(
         .filter(|s| !s.trim().is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| default_server_data_path(&dp));
+    ensure_server_config_exists(&srv_dp, Some(&exe_path))?;
     let mods = mods_dir(&dp);
     state
         .server

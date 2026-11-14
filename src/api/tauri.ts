@@ -5,7 +5,6 @@ import type {
   AppUpdateInfo,
   DetectedPaths,
   DownloadProgressEvent,
-  FirewallStatus,
   GameStatus,
   LocalMod,
   ModConfigFile,
@@ -16,7 +15,7 @@ import type {
   ModpackImportPreview,
   ModpackImportResult,
   ModpackManifest,
-  NetworkEndpoint,
+  P2pStatus,
   ProfileSettings,
   ServerConfigSummary,
   ServerLogEvent,
@@ -143,13 +142,21 @@ export const api = {
       restoreConfigs: params.restoreConfigs,
     }),
 
-  // Multiplayer & Dedicated Server
-  detectNetworkEndpoints: () =>
-    invoke<NetworkEndpoint[]>('detect_network_endpoints'),
-  checkFirewallRule: (port: number) =>
-    invoke<FirewallStatus>('check_firewall_rule', { port }),
-  addFirewallRule: (port: number) =>
-    invoke<FirewallStatus>('add_firewall_rule', { port }),
+  // Multiplayer, P2P & Dedicated Server
+  getP2pStatus: () => invoke<P2pStatus>('get_p2p_status'),
+  startP2pHost: (targetPort: number) =>
+    invoke<P2pStatus>('start_p2p_host', { targetPort }),
+  joinP2pRoom: (params: {
+    roomCode: string;
+    preferredPort?: number | null;
+    launchGame: boolean;
+  }) =>
+    invoke<P2pStatus>('join_p2p_room', {
+      roomCode: params.roomCode,
+      preferredPort: params.preferredPort ?? null,
+      launchGame: params.launchGame,
+    }),
+  stopP2p: () => invoke<P2pStatus>('stop_p2p'),
   joinServer: (address: string) =>
     invoke<GameStatus>('join_server', { address }),
 

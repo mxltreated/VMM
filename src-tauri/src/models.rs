@@ -289,19 +289,12 @@ pub struct ModpackImportResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct NetworkEndpoint {
-    pub kind: String, // "tailscale" | "zerotier" | "radmin" | "lan"
-    pub label: String,
-    pub ip: String,
-    pub interface_name: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FirewallStatus {
-    pub rule_present: bool,
-    pub port: u16,
-    pub details: String,
+pub struct P2pStatus {
+    pub active: bool,
+    pub mode: String, // "idle" | "host" | "client"
+    pub room_code: Option<String>,
+    pub local_address: Option<String>,
+    pub connected_peers: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -5,6 +5,7 @@ mod services;
 use commands::AppState;
 use services::launcher::GameLauncher;
 use services::moddb::ModDbClient;
+use services::p2p::P2pManager;
 use services::server::ServerManager;
 use tauri::Manager;
 
@@ -17,6 +18,7 @@ pub fn run() {
             moddb: ModDbClient::new(),
             launcher: GameLauncher::new(),
             server: ServerManager::new(),
+            p2p: P2pManager::new(),
         })
         .setup(|app| {
             if let Ok(cache_dir) = app.path().app_cache_dir() {
@@ -59,9 +61,10 @@ pub fn run() {
             commands::export_modpack_file,
             commands::preview_modpack_import,
             commands::apply_modpack_import,
-            commands::detect_network_endpoints,
-            commands::check_firewall_rule,
-            commands::add_firewall_rule,
+            commands::get_p2p_status,
+            commands::start_p2p_host,
+            commands::join_p2p_room,
+            commands::stop_p2p,
             commands::join_server,
             commands::get_server_status,
             commands::get_server_logs,

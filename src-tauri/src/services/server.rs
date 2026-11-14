@@ -102,12 +102,67 @@ pub fn load_server_config(server_data_path: &Path) -> Result<ServerConfigSummary
     })
 }
 
+pub fn ensure_server_config_exists(
+    server_data_path: &Path,
+    exe_path: Option<&str>,
+) -> Result<(), String> {
+    let cfg_path = server_data_path.join("serverconfig.json");
+    let needs_gen = if !cfg_path.is_file() {
+        true
+    } else {
+        fs::read_to_string(&cfg_path)
+            .ok()
+            .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+            .map(|val| {
+                val.get("Roles")
+                    .and_then(|r| r.as_array())
+                    .map(|a| a.is_empty())
+                    .unwrap_or(true)
+            })
+            .unwrap_or(true)
+    };
+
+    if !needs_gen {
+        return Ok(());
+    }
+
+    let Some(exe) = exe_path.filter(|s| Path::new(s).is_file()) else {
+        return Ok(());
+    };
+
+    fs::create_dir_all(server_data_path)
+        .map_err(|e| format!("Failed to create server data directory: {e}"))?;
+
+    let mut cmd = Command::new(exe);
+    if let Some(parent) = Path::new(exe).parent() {
+        cmd.current_dir(parent);
+    }
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+
+    let out = cmd
+        .arg("--dataPath")
+        .arg(server_data_path)
+        .arg("--genconfig")
+        .output()
+        .map_err(|e| format!("Failed to generate serverconfig.json: {e}"))?;
+
+    if !out.status.success() && !cfg_path.is_file() {
+        return Err("VintagestoryServer.exe --genconfig failed to create serverconfig.json".to_string());
+    }
+
+    Ok(())
+}
+
 pub fn save_server_config(
     server_data_path: &Path,
     summary: &ServerConfigSummary,
+    exe_path: Option<&str>,
 ) -> Result<(), String> {
     fs::create_dir_all(server_data_path)
         .map_err(|e| format!("Failed to create server data directory: {e}"))?;
+    ensure_server_config_exists(server_data_path, exe_path)?;
+
     let cfg_path = server_data_path.join("serverconfig.json");
 
     let mut root: Value = if cfg_path.is_file() {
@@ -408,7 +463,7 @@ mod tests {
             allow_pvp: false,
             whitelist_mode: 1,
         };
-        save_server_config(dir.path(), &updated).unwrap();
+        save_server_config(dir.path(), &updated, None).unwrap();
 
         let raw = fs::read_to_string(&cfg_path).unwrap();
         let val: Value = serde_json::from_str(&raw).unwrap();
