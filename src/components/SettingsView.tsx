@@ -4,8 +4,8 @@ import {
   Check,
   Download,
   FolderOpen,
-  GitBranch,
   Loader2,
+  RefreshCw,
   Sparkles,
   Terminal,
   Trash2,
@@ -34,9 +34,6 @@ export function SettingsView({
   const [saving, setSaving] = useState(false);
   const [savedToast, setSavedToast] = useState(false);
   const [cacheCleared, setCacheCleared] = useState(false);
-  const [githubRepo, setGithubRepo] = useState(
-    settings.githubRepo ?? 'mxltreated/VMM'
-  );
   const [checkingAppUpdate, setCheckingAppUpdate] = useState(false);
   const [installingAppUpdate, setInstallingAppUpdate] = useState(false);
   const [appUpdateInfo, setAppUpdateInfo] = useState<AppUpdateInfo | null>(null);
@@ -81,7 +78,6 @@ export function SettingsView({
         dataPath: dataPath.trim() || null,
         launchArgs: launchArgs.trim() || null,
         autoCheckUpdates,
-        githubRepo: githubRepo.trim() || null,
       });
       setSavedToast(true);
       setTimeout(() => setSavedToast(false), 2000);
@@ -296,40 +292,28 @@ export function SettingsView({
         </div>
       </div>
 
-      {/* Remote App Updates (GitHub Releases) */}
+      {/* Remote App Updates */}
       <div className="p-6 rounded-2xl bg-[#141720] border border-white/[0.06] space-y-4">
-        <div className="flex items-center gap-2">
-          <GitBranch className="w-4 h-4 text-amber-400" />
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-sm font-semibold text-zinc-100">
-              VMM Updates (GitHub Releases)
+              VMM Updates
             </h2>
-            <p className="text-xs text-zinc-500">
-              Point VMM to your GitHub repository to check for new app releases.
+            <p className="text-xs text-zinc-500 mt-0.5">
+              Check for new Vintage Mod Manager releases.
             </p>
           </div>
-        </div>
 
-        <div className="flex items-center gap-2">
-          <input
-            type="text"
-            value={githubRepo}
-            onChange={(e) => setGithubRepo(e.target.value)}
-            placeholder="owner/vintage-story-mod-manager"
-            className="flex-1 bg-[#0e1015] border border-white/[0.07] rounded-lg px-3 py-2 text-xs font-mono text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/40"
-          />
           <button
             type="button"
-            disabled={!githubRepo.trim() || checkingAppUpdate}
+            disabled={checkingAppUpdate}
             onClick={async () => {
               setCheckingAppUpdate(true);
               setAppUpdateErr(null);
               try {
-                await onSaveSettings({
-                  ...settings,
-                  githubRepo: githubRepo.trim() || null,
-                });
-                const info = await api.checkAppUpdate(githubRepo.trim());
+                const info = await api.checkAppUpdate(
+                  settings.githubRepo || 'mxltreated/VMM'
+                );
                 setAppUpdateInfo(info);
               } catch (err) {
                 setAppUpdateErr(err instanceof Error ? err.message : String(err));
@@ -339,8 +323,12 @@ export function SettingsView({
             }}
             className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-zinc-950 text-xs font-semibold cursor-pointer"
           >
-            {checkingAppUpdate && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-            <span>Check Updates</span>
+            {checkingAppUpdate ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="w-3.5 h-3.5" />
+            )}
+            <span>Check for Updates</span>
           </button>
         </div>
 
