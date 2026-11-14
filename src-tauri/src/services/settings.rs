@@ -139,6 +139,7 @@ pub async fn check_github_app_update(repo: &str) -> Result<AppUpdateInfo, String
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
+    let mut zip_url = None;
     let mut exe_url = None;
     let mut msi_url = None;
     if let Some(assets) = json.get("assets").and_then(|v| v.as_array()) {
@@ -148,14 +149,16 @@ pub async fn check_github_app_update(repo: &str) -> Result<AppUpdateInfo, String
                 .get("browser_download_url")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
-            if name.ends_with(".exe") && exe_url.is_none() {
+            if name.ends_with(".zip") && zip_url.is_none() {
+                zip_url = dl;
+            } else if name.ends_with(".exe") && exe_url.is_none() {
                 exe_url = dl;
             } else if name.ends_with(".msi") && msi_url.is_none() {
                 msi_url = dl;
             }
         }
     }
-    let download_url = exe_url.or(msi_url);
+    let download_url = zip_url.or(exe_url).or(msi_url);
 
     Ok(AppUpdateInfo {
         current_version: current,
@@ -176,12 +179,12 @@ pub async fn download_and_launch_installer(url: &str) -> Result<(), String> {
     let filename = trimmed
         .rsplit('/')
         .next()
-        .filter(|s| s.ends_with(".exe") || s.ends_with(".msi"))
+        .filter(|s| s.ends_with(".zip") || s.ends_with(".exe") || s.ends_with(".msi"))
         .unwrap_or("VMM-Setup.exe");
 
     let dest = std::env::temp_dir().join(filename);
     let client = Client::builder()
-        .user_agent("VintageStoryModManager/1.1.0")
+        .user_agent(concat!("VintageStoryModManager/", env!("CARGO_PKG_VERSION")))
         .build()
         .unwrap_or_else(|_| Client::new());
 
@@ -189,19 +192,19 @@ pub async fn download_and_launch_installer(url: &str) -> Result<(), String> {
         .get(trimmed)
         .send()
         .await
-        .map_err(|e| format!("Failed to download installer: {e}"))?;
+        .map_err(|e| format!("Failed to download update: {e}"))?;
 
     if !resp.status().is_success() {
-        return Err(format!("Installer download failed with HTTP {}", resp.status()));
+        return Err(format!("Update download failed with HTTP {}", resp.status()));
     }
 
     let bytes = resp
         .bytes()
         .await
-        .map_err(|e| format!("Failed to read installer bytes: {e}"))?;
+        .map_err(|e| format!("Failed to read update bytes: {e}"))?;
 
     fs::write(&dest, &bytes)
-        .map_err(|e| format!("Failed to save installer to {}: {e}", dest.display()))?;
+        .map_err(|e| format!("Failed to save update to {}: {e}", dest.display()))?;
 
     #[cfg(windows)]
     {
@@ -210,49 +213,89 @@ pub async fn download_and_launch_installer(url: &str) -> Result<(), String> {
 
         let ps_quote = |s: &str| s.replace('\'', "''");
         let pid = std::process::id();
-        let current_exe = std::env::current_exe().ok();
-        let install_dir = current_exe.as_deref().and_then(|p| p.parent()).filter(|dir| {
-            let s = dir.to_string_lossy().to_ascii_lowercase();
-            !s.ends_with(r"\target\debug") && !s.ends_with(r"\target\release")
-        });
+        let current_exe = std::env::current_exe()
+            .map_err(|e| format!("Failed to locate current executable: {e}"))?;
 
-        let dest_str = dest.to_string_lossy();
-        let install_cmd = if filename.ends_with(".msi") {
-            let args = format!("/i \"{dest_str}\" /qn /norestart");
+        let script = if filename.ends_with(".zip") {
+            let staged_exe = std::env::temp_dir().join("VMM-update.exe");
+            {
+                let file = fs::File::open(&dest)
+                    .map_err(|e| format!("Failed to open update archive: {e}"))?;
+                let mut archive = zip::ZipArchive::new(file)
+                    .map_err(|e| format!("Failed to read update archive: {e}"))?;
+                let mut extracted = false;
+                for i in 0..archive.len() {
+                    let mut entry = archive
+                        .by_index(i)
+                        .map_err(|e| format!("Failed to read archive entry: {e}"))?;
+                    if entry.name().to_ascii_lowercase().ends_with(".exe") {
+                        let mut out = fs::File::create(&staged_exe)
+                            .map_err(|e| format!("Failed to stage update binary: {e}"))?;
+                        std::io::copy(&mut entry, &mut out)
+                            .map_err(|e| format!("Failed to extract update binary: {e}"))?;
+                        extracted = true;
+                        break;
+                    }
+                }
+                if !extracted {
+                    return Err("Update archive did not contain an executable".to_string());
+                }
+            }
+            let _ = fs::remove_file(&dest);
+
+            let staged_q = ps_quote(&staged_exe.to_string_lossy());
+            let target_q = ps_quote(&current_exe.to_string_lossy());
             format!(
-                "$p = Start-Process -FilePath 'msiexec.exe' -ArgumentList '{}' -Wait -PassThru",
-                ps_quote(&args)
+                "$ErrorActionPreference = 'Stop'\r\n\
+                 Wait-Process -Id {pid} -Timeout 15 -ErrorAction SilentlyContinue\r\n\
+                 Start-Sleep -Milliseconds 300\r\n\
+                 try {{\r\n\
+                     Copy-Item -LiteralPath '{staged_q}' -Destination '{target_q}' -Force\r\n\
+                 }} catch {{\r\n\
+                     $elevated = \"Copy-Item -LiteralPath '{staged_q}' -Destination '{target_q}' -Force\"\r\n\
+                     Start-Process powershell.exe -Verb RunAs -WindowStyle Hidden -Wait -ArgumentList @('-NoProfile', '-Command', $elevated)\r\n\
+                 }}\r\n\
+                 Remove-Item -LiteralPath '{staged_q}' -Force -ErrorAction SilentlyContinue\r\n\
+                 if (Test-Path -LiteralPath '{target_q}') {{ Start-Process -FilePath '{target_q}' }}\r\n\
+                 Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue\r\n"
             )
         } else {
-            let args = match install_dir {
-                Some(dir) => format!("/S /D={}", dir.display()),
-                None => "/S".to_string(),
+            let install_dir = current_exe.parent().filter(|dir| {
+                let s = dir.to_string_lossy().to_ascii_lowercase();
+                !s.ends_with(r"\target\debug") && !s.ends_with(r"\target\release")
+            });
+
+            let dest_str = dest.to_string_lossy();
+            let install_cmd = if filename.ends_with(".msi") {
+                let args = format!("/i \"{dest_str}\" /qn /norestart");
+                format!(
+                    "$p = Start-Process -FilePath 'msiexec.exe' -ArgumentList '{}' -Wait -PassThru",
+                    ps_quote(&args)
+                )
+            } else {
+                let args = match install_dir {
+                    Some(dir) => format!("/S /D={}", dir.display()),
+                    None => "/S".to_string(),
+                };
+                format!(
+                    "$p = Start-Process -FilePath '{}' -ArgumentList '{}' -Wait -PassThru",
+                    ps_quote(&dest_str),
+                    ps_quote(&args)
+                )
             };
+
+            let target_q = ps_quote(&current_exe.to_string_lossy());
             format!(
-                "$p = Start-Process -FilePath '{}' -ArgumentList '{}' -Wait -PassThru",
-                ps_quote(&dest_str),
-                ps_quote(&args)
+                "$ErrorActionPreference = 'SilentlyContinue'\r\n\
+                 Wait-Process -Id {pid} -Timeout 15\r\n\
+                 Start-Sleep -Milliseconds 300\r\n\
+                 {install_cmd}\r\n\
+                 if ($p.ExitCode -eq 0) {{ Remove-Item -LiteralPath '{}' -Force }}\r\n\
+                 if (Test-Path -LiteralPath '{target_q}') {{ Start-Process -FilePath '{target_q}' }}\r\n\
+                 Remove-Item -LiteralPath $PSCommandPath -Force\r\n",
+                ps_quote(&dest_str)
             )
         };
-
-        let relaunch_cmd = match current_exe.as_deref() {
-            Some(exe) => {
-                let exe_q = ps_quote(&exe.to_string_lossy());
-                format!("if (Test-Path -LiteralPath '{exe_q}') {{ Start-Process -FilePath '{exe_q}' }}")
-            }
-            None => String::new(),
-        };
-
-        let script = format!(
-            "$ErrorActionPreference = 'SilentlyContinue'\r\n\
-             Wait-Process -Id {pid} -Timeout 15\r\n\
-             Start-Sleep -Milliseconds 300\r\n\
-             {install_cmd}\r\n\
-             if ($p.ExitCode -eq 0) {{ Remove-Item -LiteralPath '{}' -Force }}\r\n\
-             {relaunch_cmd}\r\n\
-             Remove-Item -LiteralPath $PSCommandPath -Force\r\n",
-            ps_quote(&dest_str)
-        );
 
         let script_path = std::env::temp_dir().join("vmm-update.ps1");
         fs::write(&script_path, script)
