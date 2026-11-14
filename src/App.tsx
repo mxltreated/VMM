@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertCircle, X } from 'lucide-react';
+import { AlertCircle, Download, Loader2, X } from 'lucide-react';
 import { api } from './api/tauri';
 import { BrowseModsView } from './components/BrowseModsView';
 import { ConfigsView } from './components/ConfigsView';
@@ -13,6 +13,7 @@ import { SettingsView } from './components/SettingsView';
 import { Sidebar } from './components/Sidebar';
 import type {
   AppSettings,
+  AppUpdateInfo,
   DownloadProgressEvent,
   GameStatus,
   LocalMod,
@@ -52,6 +53,8 @@ export function App() {
   const [downloads, setDownloads] = useState<Record<string, DownloadProgressEvent>>({});
   const [selectedMod, setSelectedMod] = useState<ModDbSummary | null>(null);
   const [bannerError, setBannerError] = useState<string | null>(null);
+  const [appUpdate, setAppUpdate] = useState<AppUpdateInfo | null>(null);
+  const [installingUpdate, setInstallingUpdate] = useState(false);
 
   const refreshLocalMods = useCallback(async () => {
     try {
@@ -97,6 +100,12 @@ export function App() {
             .then(setLocalMods)
             .catch(() => {});
         }
+        api
+          .checkAppUpdate(s.githubRepo || 'mxltreated/VMM')
+          .then((info) => {
+            if (info.updateAvailable) setAppUpdate(info);
+          })
+          .catch(() => {});
       } catch (err) {
         setBannerError(err instanceof Error ? err.message : String(err));
         await Promise.all([refreshLocalMods(), refreshProfiles(), refreshConfigs()]);
@@ -347,6 +356,45 @@ export function App() {
           launching={launching}
           gameStatus={gameStatus}
         />
+
+        {appUpdate && appUpdate.updateAvailable && (
+          <div className="animate-slide-up mx-6 mt-3 px-4 py-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-between gap-3 text-xs text-emerald-300">
+            <div className="flex items-center gap-2 min-w-0">
+              <Download className="w-4 h-4 shrink-0" />
+              <span className="truncate">
+                VMM v{appUpdate.latestVersion} is available (you are on v{appUpdate.currentVersion}).
+              </span>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                disabled={installingUpdate}
+                onClick={async () => {
+                  if (!appUpdate.downloadUrl) {
+                    await api.openExternalUrl(appUpdate.htmlUrl);
+                    return;
+                  }
+                  setInstallingUpdate(true);
+                  try {
+                    await api.installAppUpdate(appUpdate.downloadUrl);
+                  } catch (err) {
+                    setBannerError(err instanceof Error ? err.message : String(err));
+                    setInstallingUpdate(false);
+                  }
+                }}
+                className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-semibold cursor-pointer disabled:opacity-50"
+              >
+                {installingUpdate && <Loader2 className="w-3 h-3 animate-spin" />}
+                <span>{installingUpdate ? 'Downloading...' : 'Install Update'}</span>
+              </button>
+              <button
+                onClick={() => setAppUpdate(null)}
+                className="p-1 hover:bg-emerald-500/20 rounded cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
 
         {bannerError && (
           <div className="animate-slide-up mx-6 mt-3 px-4 py-2.5 rounded-xl bg-rose-500/10 border border-rose-500/25 flex items-center justify-between gap-3 text-xs text-rose-300">

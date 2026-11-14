@@ -190,4 +190,6 @@ export const api = {
     invoke<AppUpdateInfo>('check_app_update', { repo }),
   openExternalUrl: (url: string) =>
     invoke<void>('open_external_url', { url }),
+  installAppUpdate: (url: string) =>
+    invoke<void>('install_app_update', { url }),
 };

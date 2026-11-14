@@ -34,8 +34,11 @@ export function SettingsView({
   const [saving, setSaving] = useState(false);
   const [savedToast, setSavedToast] = useState(false);
   const [cacheCleared, setCacheCleared] = useState(false);
-  const [githubRepo, setGithubRepo] = useState(settings.githubRepo ?? '');
+  const [githubRepo, setGithubRepo] = useState(
+    settings.githubRepo ?? 'mxltreated/VMM'
+  );
   const [checkingAppUpdate, setCheckingAppUpdate] = useState(false);
+  const [installingAppUpdate, setInstallingAppUpdate] = useState(false);
   const [appUpdateInfo, setAppUpdateInfo] = useState<AppUpdateInfo | null>(null);
   const [appUpdateErr, setAppUpdateErr] = useState<string | null>(null);
 
@@ -358,15 +361,37 @@ export function SettingsView({
               {appUpdateInfo.updateAvailable && (
                 <button
                   type="button"
-                  onClick={() =>
-                    api.openExternalUrl(
-                      appUpdateInfo.downloadUrl ?? appUpdateInfo.htmlUrl
-                    )
-                  }
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 font-medium cursor-pointer"
+                  disabled={installingAppUpdate}
+                  onClick={async () => {
+                    if (!appUpdateInfo.downloadUrl) {
+                      await api.openExternalUrl(appUpdateInfo.htmlUrl);
+                      return;
+                    }
+                    setInstallingAppUpdate(true);
+                    setAppUpdateErr(null);
+                    try {
+                      await api.installAppUpdate(appUpdateInfo.downloadUrl);
+                    } catch (err) {
+                      setAppUpdateErr(
+                        err instanceof Error ? err.message : String(err)
+                      );
+                      setInstallingAppUpdate(false);
+                    }
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 font-medium cursor-pointer disabled:opacity-50"
                 >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>Download v{appUpdateInfo.latestVersion}</span>
+                  {installingAppUpdate ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Download className="w-3.5 h-3.5" />
+                  )}
+                  <span>
+                    {installingAppUpdate
+                      ? 'Downloading Installer...'
+                      : appUpdateInfo.downloadUrl
+                        ? `Install v${appUpdateInfo.latestVersion}`
+                        : `Download v${appUpdateInfo.latestVersion}`}
+                  </span>
                 </button>
               )}
             </div>

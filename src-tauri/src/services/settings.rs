@@ -53,7 +53,7 @@ pub fn load_settings(config_dir: &Path) -> Result<AppSettings, String> {
             onboarding_completed: false,
             launch_args: None,
             auto_check_updates: false,
-            github_repo: None,
+            github_repo: Some("mxltreated/VMM".to_string()),
         };
         save_settings(config_dir, &defaults)?;
         return Ok(defaults);
@@ -72,6 +72,9 @@ pub fn load_settings(config_dir: &Path) -> Result<AppSettings, String> {
         if settings.game_exe_path.is_none() {
             settings.game_exe_path = detected.game_exe_path;
         }
+    }
+    if settings.github_repo.is_none() {
+        settings.github_repo = Some("mxltreated/VMM".to_string());
     }
 
     Ok(settings)
@@ -158,4 +161,57 @@ pub async fn check_github_app_update(repo: &str) -> Result<AppUpdateInfo, String
         html_url,
         download_url,
     })
+}
+
+pub async fn download_and_launch_installer(url: &str) -> Result<(), String> {
+    let trimmed = url.trim();
+    if !trimmed.starts_with("https://") {
+        return Err("Installer URL must use HTTPS".to_string());
+    }
+
+    let filename = trimmed
+        .rsplit('/')
+        .next()
+        .filter(|s| s.ends_with(".exe") || s.ends_with(".msi"))
+        .unwrap_or("VMM-Setup.exe");
+
+    let dest = std::env::temp_dir().join(filename);
+    let client = Client::builder()
+        .user_agent("VintageStoryModManager/1.1.0")
+        .build()
+        .unwrap_or_else(|_| Client::new());
+
+    let resp = client
+        .get(trimmed)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to download installer: {e}"))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Installer download failed with HTTP {}", resp.status()));
+    }
+
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read installer bytes: {e}"))?;
+
+    fs::write(&dest, &bytes)
+        .map_err(|e| format!("Failed to save installer to {}: {e}", dest.display()))?;
+
+    #[cfg(windows)]
+    {
+        if filename.ends_with(".msi") {
+            std::process::Command::new("msiexec")
+                .args(["/i", &dest.to_string_lossy()])
+                .spawn()
+                .map_err(|e| format!("Failed to launch MSI installer: {e}"))?;
+        } else {
+            std::process::Command::new(&dest)
+                .spawn()
+                .map_err(|e| format!("Failed to launch installer: {e}"))?;
+        }
+    }
+
+    Ok(())
 }

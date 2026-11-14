@@ -35,7 +35,8 @@ use crate::services::server::{
     ServerManager,
 };
 use crate::services::settings::{
-    check_github_app_update, detect_vintage_story_paths, load_settings, save_settings,
+    check_github_app_update, detect_vintage_story_paths, download_and_launch_installer,
+    load_settings, save_settings,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -623,4 +624,11 @@ pub fn open_external_url(app: AppHandle, url: String) -> Result<(), String> {
     app.opener()
         .open_url(url, None::<&str>)
         .map_err(|e| format!("Failed to open URL: {e}"))
+}
+
+#[tauri::command]
+pub async fn install_app_update(app: AppHandle, url: String) -> Result<(), String> {
+    download_and_launch_installer(&url).await?;
+    app.exit(0);
+    Ok(())
 }
