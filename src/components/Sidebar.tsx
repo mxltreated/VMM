@@ -37,7 +37,7 @@ export function Sidebar({
               Vintage Mod Manager
             </div>
             <div className="text-[11px] text-zinc-500 font-medium">
-              VMM • v1.1.6
+              VMM • v1.1.7
             </div>
           </div>
         </div>
