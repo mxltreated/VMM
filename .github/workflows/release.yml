@@ -5,28 +5,37 @@ on:
     tags:
       - 'v*'
 
-permissions:
-  contents: write
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   publish-tauri:
     runs-on: windows-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
 
       - name: Install frontend dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Build and publish Tauri release
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -40,6 +49,7 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
           $exe = "src-tauri/target/release/vintage-story-mod-manager.exe"
           if (-not (Test-Path $exe)) {
@@ -50,4 +60,4 @@ jobs:
           Copy-Item $exe (Join-Path $stage "Vintage Mod Manager.exe") -Force
           $zipPath = Join-Path $env:RUNNER_TEMP "VMM-windows-x64.zip"
           Compress-Archive -Path (Join-Path $stage "Vintage Mod Manager.exe") -DestinationPath $zipPath -Force
-          gh release upload "${{ github.ref_name }}" $zipPath --clobber
+          gh release upload "$env:RELEASE_TAG" $zipPath --clobber
