@@ -15,6 +15,7 @@ import {
   X,
 } from 'lucide-react';
 import { api } from '../api/tauri';
+import { isSafeHttpUrl } from '../utils/sanitize';
 import type {
   DownloadProgressEvent,
   LocalMod,
@@ -370,6 +371,7 @@ export function BrowseModsView({
                 const dlKey = mod.modidstrs[0] || String(mod.modid);
                 const dl = downloads[dlKey] || downloads[String(mod.modid)];
                 const isDownloading = Boolean(dl && !dl.done);
+                const safeLogo = isSafeHttpUrl(mod.logo);
 
                 return (
                   <div
@@ -379,9 +381,9 @@ export function BrowseModsView({
                   >
                     <div className="space-y-2.5">
                       <div className="flex items-start gap-3">
-                        {mod.logo ? (
+                        {safeLogo ? (
                           <img
-                            src={mod.logo}
+                            src={safeLogo}
                             alt={mod.name}
                             className="w-12 h-12 rounded-xl object-cover bg-zinc-900 shrink-0 border border-white/[0.08]"
                           />
@@ -491,6 +493,7 @@ export function BrowseModsView({
                   dl && dl.totalBytes
                     ? Math.min(100, Math.round((dl.bytesReceived / dl.totalBytes) * 100))
                     : null;
+                const safeLogo = isSafeHttpUrl(mod.logo);
 
                 return (
                   <div
@@ -500,9 +503,9 @@ export function BrowseModsView({
                   >
                     <div>
                       <div className="flex items-start gap-3">
-                        {mod.logo ? (
+                        {safeLogo ? (
                           <img
-                            src={mod.logo}
+                            src={safeLogo}
                             alt={mod.name}
                             loading="lazy"
                             className="w-12 h-12 rounded-lg object-cover bg-zinc-900 shrink-0 border border-white/[0.06]"

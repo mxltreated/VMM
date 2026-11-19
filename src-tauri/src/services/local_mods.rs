@@ -1,12 +1,18 @@
 use crate::models::{LocalMod, ModInfo};
 use crate::services::moddb::ModDbClient;
+use crate::services::security::{
+    ensure_no_symlink_escape, is_zip_symlink, read_bounded, validate_mod_filename,
+};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use semver::Version;
 use std::collections::HashMap;
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use zip::ZipArchive;
+
+const MAX_MODINFO_BYTES: usize = 256 * 1024;
+const MAX_MODICON_BYTES: usize = 2 * 1024 * 1024;
+const PNG_MAGIC: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
 
 pub fn mods_dir(data_path: &Path) -> PathBuf {
     data_path.join("Mods")
@@ -37,10 +43,13 @@ fn scan_directory(dir: &Path, enabled: bool, out: &mut Vec<LocalMod>) -> Result<
         .map_err(|e| format!("Failed to read directory {}: {e}", dir.display()))?;
 
     for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_file() {
+        let Ok(ft) = entry.file_type() else {
+            continue;
+        };
+        if ft.is_symlink() || !ft.is_file() {
             continue;
         }
+        let path = entry.path();
         let is_zip = path
             .extension()
             .and_then(|s| s.to_str())
@@ -60,6 +69,19 @@ fn scan_directory(dir: &Path, enabled: bool, out: &mut Vec<LocalMod>) -> Result<
     }
 
     Ok(())
+}
+
+fn parse_modinfo_bytes(bytes: &[u8]) -> Option<ModInfo> {
+    let raw = std::str::from_utf8(bytes).ok()?;
+    let cleaned = raw.trim_start_matches('\u{feff}');
+    serde_json::from_str::<ModInfo>(cleaned).ok()
+}
+
+fn encode_png_icon(bytes: &[u8]) -> Option<String> {
+    if bytes.len() < PNG_MAGIC.len() || !bytes.starts_with(&PNG_MAGIC) {
+        return None;
+    }
+    Some(format!("data:image/png;base64,{}", BASE64.encode(bytes)))
 }
 
 pub fn read_mod_zip(path: &Path, filename: String, enabled: bool) -> LocalMod {
@@ -114,34 +136,54 @@ pub fn read_mod_zip(path: &Path, filename: String, enabled: bool) -> LocalMod {
         }
     };
 
-    let mut mod_info = ModInfo::default();
+    let mut mod_info: Option<ModInfo> = None;
     let mut icon_base64: Option<String> = None;
 
-    for i in 0..archive.len() {
-        let mut entry = match archive.by_index(i) {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-        let entry_name = entry.name().to_string();
-        let lower = entry_name.to_lowercase();
-
-        if lower == "modinfo.json" || lower.ends_with("/modinfo.json") {
-            let mut raw = String::new();
-            if entry.read_to_string(&mut raw).is_ok() {
-                let cleaned = raw.trim_start_matches('\u{feff}');
-                if let Ok(parsed) = serde_json::from_str::<ModInfo>(cleaned) {
-                    mod_info = parsed;
-                }
-            }
-        } else if (lower == "modicon.png" || lower.ends_with("/modicon.png"))
-            && icon_base64.is_none()
-        {
-            let mut buf = Vec::new();
-            if entry.read_to_end(&mut buf).is_ok() && !buf.is_empty() {
-                icon_base64 = Some(format!("data:image/png;base64,{}", BASE64.encode(buf)));
+    if let Ok(mut entry) = archive.by_name("modinfo.json") {
+        if !is_zip_symlink(entry.unix_mode()) {
+            if let Ok(bytes) = read_bounded(&mut entry, MAX_MODINFO_BYTES, "modinfo.json") {
+                mod_info = parse_modinfo_bytes(&bytes);
             }
         }
     }
+
+    if let Ok(mut entry) = archive.by_name("modicon.png") {
+        if !is_zip_symlink(entry.unix_mode()) {
+            if let Ok(bytes) = read_bounded(&mut entry, MAX_MODICON_BYTES, "modicon.png") {
+                icon_base64 = encode_png_icon(&bytes);
+            }
+        }
+    }
+
+    if mod_info.is_none() || icon_base64.is_none() {
+        for i in 0..archive.len() {
+            if mod_info.is_some() && icon_base64.is_some() {
+                break;
+            }
+            let mut entry = match archive.by_index(i) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            if entry.is_dir() || is_zip_symlink(entry.unix_mode()) {
+                continue;
+            }
+            let lower = entry.name().to_ascii_lowercase();
+
+            if mod_info.is_none() && (lower == "modinfo.json" || lower.ends_with("/modinfo.json")) {
+                if let Ok(bytes) = read_bounded(&mut entry, MAX_MODINFO_BYTES, "modinfo.json") {
+                    mod_info = parse_modinfo_bytes(&bytes);
+                }
+            } else if icon_base64.is_none()
+                && (lower == "modicon.png" || lower.ends_with("/modicon.png"))
+            {
+                if let Ok(bytes) = read_bounded(&mut entry, MAX_MODICON_BYTES, "modicon.png") {
+                    icon_base64 = encode_png_icon(&bytes);
+                }
+            }
+        }
+    }
+
+    let mod_info = mod_info.unwrap_or_default();
 
     let name = mod_info
         .name
@@ -177,6 +219,7 @@ pub fn read_mod_zip(path: &Path, filename: String, enabled: bool) -> LocalMod {
 }
 
 pub fn toggle_mod(data_path: &Path, filename: &str, enable: bool) -> Result<(), String> {
+    let safe_filename = validate_mod_filename(filename)?;
     let enabled_dir = mods_dir(data_path);
     let disabled_dir = disabled_mods_dir(data_path);
 
@@ -186,19 +229,27 @@ pub fn toggle_mod(data_path: &Path, filename: &str, enable: bool) -> Result<(), 
         (&enabled_dir, &disabled_dir)
     };
 
-    let src = src_dir.join(filename);
+    let src = src_dir.join(&safe_filename);
+    let dst = dst_dir.join(&safe_filename);
+
+    if src_dir.exists() {
+        ensure_no_symlink_escape(src_dir, &src)?;
+    }
+
     if !src.exists() {
-        // Already in the target directory?
-        if dst_dir.join(filename).exists() {
-            return Ok(());
+        if dst_dir.exists() {
+            ensure_no_symlink_escape(dst_dir, &dst)?;
+            if dst.exists() {
+                return Ok(());
+            }
         }
         return Err(format!("Mod file not found: {}", src.display()));
     }
 
     fs::create_dir_all(dst_dir)
         .map_err(|e| format!("Failed to create directory {}: {e}", dst_dir.display()))?;
+    ensure_no_symlink_escape(dst_dir, &dst)?;
 
-    let dst = dst_dir.join(filename);
     move_file_safely(&src, &dst)
 }
 
@@ -214,12 +265,17 @@ pub fn move_file_safely(src: &Path, dst: &Path) -> Result<(), String> {
 }
 
 pub fn delete_mod(data_path: &Path, filename: &str, enabled: bool) -> Result<(), String> {
+    let safe_filename = validate_mod_filename(filename)?;
     let dir = if enabled {
         mods_dir(data_path)
     } else {
         disabled_mods_dir(data_path)
     };
-    let target = dir.join(filename);
+    if !dir.exists() {
+        return Ok(());
+    }
+    let target = dir.join(&safe_filename);
+    ensure_no_symlink_escape(&dir, &target)?;
     if target.exists() {
         fs::remove_file(&target)
             .map_err(|e| format!("Failed to delete {}: {e}", target.display()))?;
@@ -329,6 +385,39 @@ mod tests {
         // Re-enable -> moves back to Mods
         toggle_mod(dir.path(), "carrycapacity_1.0.0.zip", true).unwrap();
         assert!(zip_path.exists());
+    }
+
+    #[test]
+    fn rejects_path_traversal_in_toggle_and_delete() {
+        let dir = tempdir().unwrap();
+        let mods_path = mods_dir(dir.path());
+        fs::create_dir_all(&mods_path).unwrap();
+        let outside = dir.path().join("important.zip");
+        fs::write(&outside, b"keep").unwrap();
+
+        assert!(toggle_mod(dir.path(), "../important.zip", false).is_err());
+        assert!(delete_mod(dir.path(), "../important.zip", true).is_err());
+        assert!(delete_mod(dir.path(), outside.to_str().unwrap(), true).is_err());
+        assert!(outside.exists());
+    }
+
+    #[test]
+    fn rejects_fake_png_modicon() {
+        let dir = tempdir().unwrap();
+        let zip_path = dir.path().join("fakeicon.zip");
+        let file = fs::File::create(&zip_path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        zip.start_file("modinfo.json", SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(br#"{"modid":"fake","name":"Fake","version":"1.0.0"}"#)
+            .unwrap();
+        zip.start_file("modicon.png", SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(b"<svg>not a png</svg>").unwrap();
+        zip.finish().unwrap();
+
+        let parsed = read_mod_zip(&zip_path, "fakeicon.zip".to_string(), true);
+        assert!(parsed.icon_base64.is_none());
     }
 
     #[test]

@@ -1,4 +1,5 @@
 use crate::models::{ServerConfigSummary, ServerLogEvent, ServerStatus};
+use crate::services::security::{validate_exe_path, write_file_atomic};
 use serde_json::{json, Value};
 use std::collections::VecDeque;
 use std::fs;
@@ -6,6 +7,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
 #[cfg(windows)]
@@ -14,7 +16,13 @@ use std::os::windows::process::CommandExt;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+const SERVER_EXE_NAMES: &[&str] = &["vintagestoryserver.exe", "vintagestoryserver"];
 const MAX_LOG_LINES: usize = 400;
+const MAX_LOG_LINE_BYTES: usize = 4096;
+const MAX_SERVER_CONFIG_BYTES: usize = 2 * 1024 * 1024;
+const MAX_SERVER_COMMAND_BYTES: usize = 2048;
+const MAX_SERVER_CLIENTS: u32 = 512;
+const GENCONFIG_TIMEOUT: Duration = Duration::from_secs(15);
 
 pub fn detect_server_exe(game_exe_path: Option<&str>) -> Option<String> {
     if let Some(client_exe) = game_exe_path {
@@ -126,28 +134,53 @@ pub fn ensure_server_config_exists(
         return Ok(());
     }
 
-    let Some(exe) = exe_path.filter(|s| Path::new(s).is_file()) else {
+    let Some(raw_exe) = exe_path.filter(|s| !s.trim().is_empty()) else {
+        return Ok(());
+    };
+    let Ok(exe) = validate_exe_path(raw_exe, SERVER_EXE_NAMES) else {
         return Ok(());
     };
 
     fs::create_dir_all(server_data_path)
         .map_err(|e| format!("Failed to create server data directory: {e}"))?;
 
-    let mut cmd = Command::new(exe);
-    if let Some(parent) = Path::new(exe).parent() {
+    let mut cmd = Command::new(&exe);
+    if let Some(parent) = exe.parent() {
         cmd.current_dir(parent);
     }
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW);
 
-    let out = cmd
+    let mut child = cmd
         .arg("--dataPath")
         .arg(server_data_path)
         .arg("--genconfig")
-        .output()
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
         .map_err(|e| format!("Failed to generate serverconfig.json: {e}"))?;
 
-    if !out.status.success() && !cfg_path.is_file() {
+    let deadline = Instant::now() + GENCONFIG_TIMEOUT;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(st)) => break st,
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err("Timed out waiting for VintagestoryServer --genconfig".to_string());
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            Err(e) => {
+                let _ = child.kill();
+                return Err(format!("Failed waiting for server config generator: {e}"));
+            }
+        }
+    };
+
+    if !status.success() && !cfg_path.is_file() {
         return Err("VintagestoryServer.exe --genconfig failed to create serverconfig.json".to_string());
     }
 
@@ -188,8 +221,7 @@ pub fn save_server_config(
 
     let formatted = serde_json::to_string_pretty(&root)
         .map_err(|e| format!("Failed to serialize serverconfig.json: {e}"))?;
-    fs::write(&cfg_path, formatted)
-        .map_err(|e| format!("Failed to write serverconfig.json: {e}"))
+    write_file_atomic(&cfg_path, formatted.as_bytes())
 }
 
 pub fn load_server_config_raw(
@@ -212,8 +244,7 @@ pub fn load_server_config_raw(
         });
         let formatted = serde_json::to_string_pretty(&default_cfg)
             .map_err(|e| format!("Failed to serialize default serverconfig.json: {e}"))?;
-        fs::write(&cfg_path, &formatted)
-            .map_err(|e| format!("Failed to write serverconfig.json: {e}"))?;
+        write_file_atomic(&cfg_path, formatted.as_bytes())?;
         return Ok(formatted);
     }
 
@@ -222,15 +253,83 @@ pub fn load_server_config_raw(
 }
 
 pub fn save_server_config_raw(server_data_path: &Path, raw: &str) -> Result<(), String> {
+    if raw.len() > MAX_SERVER_CONFIG_BYTES {
+        return Err(format!(
+            "serverconfig.json exceeds maximum allowed size ({MAX_SERVER_CONFIG_BYTES} bytes)"
+        ));
+    }
     let val: Value = serde_json::from_str(raw)
         .map_err(|e| format!("Invalid JSON in serverconfig.json: {e}"))?;
     let formatted = serde_json::to_string_pretty(&val)
         .map_err(|e| format!("Failed to format serverconfig.json: {e}"))?;
-    fs::create_dir_all(server_data_path)
-        .map_err(|e| format!("Failed to create server data directory: {e}"))?;
     let cfg_path = server_data_path.join("serverconfig.json");
-    fs::write(&cfg_path, formatted)
-        .map_err(|e| format!("Failed to write serverconfig.json: {e}"))
+    write_file_atomic(&cfg_path, formatted.as_bytes())
+}
+
+fn read_bounded_line<R: BufRead>(reader: &mut R, max_len: usize) -> Option<String> {
+    let mut buf = Vec::new();
+    let mut truncated = false;
+    loop {
+        let avail = match reader.fill_buf() {
+            Ok(b) if b.is_empty() => {
+                if buf.is_empty() {
+                    return None;
+                }
+                let mut s = String::from_utf8_lossy(&buf).into_owned();
+                if truncated {
+                    s.push_str("... [truncated]");
+                }
+                return Some(s);
+            }
+            Ok(b) => b,
+            Err(_) => return None,
+        };
+
+        if let Some(pos) = avail.iter().position(|&b| b == b'\n') {
+            if !truncated {
+                let remaining = max_len.saturating_sub(buf.len());
+                let copy_len = pos.min(remaining);
+                buf.extend_from_slice(&avail[..copy_len]);
+                if copy_len < pos {
+                    truncated = true;
+                }
+            }
+            reader.consume(pos + 1);
+            if buf.ends_with(b"\r") {
+                buf.pop();
+            }
+            let mut s = String::from_utf8_lossy(&buf).into_owned();
+            if truncated {
+                s.push_str("... [truncated]");
+            }
+            return Some(s);
+        } else {
+            if !truncated {
+                let remaining = max_len.saturating_sub(buf.len());
+                let copy_len = avail.len().min(remaining);
+                buf.extend_from_slice(&avail[..copy_len]);
+                if copy_len < avail.len() {
+                    truncated = true;
+                }
+            }
+            let len = avail.len();
+            reader.consume(len);
+        }
+    }
+}
+
+pub fn validate_server_command(command: &str) -> Result<&str, String> {
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        return Err("Server command cannot be empty".to_string());
+    }
+    if trimmed.len() > MAX_SERVER_COMMAND_BYTES {
+        return Err("Server command exceeds maximum length".to_string());
+    }
+    if trimmed.chars().any(|c| matches!(c, '\r' | '\n' | '\0')) {
+        return Err("Server command contains invalid control characters".to_string());
+    }
+    Ok(trimmed)
 }
 
 struct RunningServer {
@@ -254,7 +353,12 @@ impl ServerManager {
         }
     }
 
-    fn push_log(logs: &Arc<Mutex<VecDeque<ServerLogEvent>>>, app: &AppHandle, line: String, is_error: bool) {
+    fn push_log(
+        logs: &Arc<Mutex<VecDeque<ServerLogEvent>>>,
+        app: &AppHandle,
+        line: String,
+        is_error: bool,
+    ) {
         let ev = ServerLogEvent { line, is_error };
         if let Ok(mut guard) = logs.lock() {
             if guard.len() >= MAX_LOG_LINES {
@@ -281,10 +385,16 @@ impl ServerManager {
         port: u16,
         max_clients: u32,
     ) -> Result<ServerStatus, String> {
-        let exe = Path::new(exe_path);
-        if !exe.is_file() {
-            return Err(format!("Server executable not found at '{exe_path}'"));
+        if port == 0 {
+            return Err("Server port must be between 1 and 65535".to_string());
         }
+        if max_clients == 0 || max_clients > MAX_SERVER_CLIENTS {
+            return Err(format!(
+                "Max players must be between 1 and {MAX_SERVER_CLIENTS}"
+            ));
+        }
+
+        let exe = validate_exe_path(exe_path, SERVER_EXE_NAMES)?;
 
         fs::create_dir_all(server_data_path)
             .map_err(|e| format!("Failed to create server data directory: {e}"))?;
@@ -310,7 +420,7 @@ impl ServerManager {
             log_guard.clear();
         }
 
-        let mut cmd = Command::new(exe);
+        let mut cmd = Command::new(&exe);
         if let Some(parent) = exe.parent() {
             cmd.current_dir(parent);
         }
@@ -347,8 +457,8 @@ impl ServerManager {
             let logs_ref = Arc::clone(&self.logs);
             let app_handle = app.clone();
             std::thread::spawn(move || {
-                let reader = BufReader::new(out);
-                for line in reader.lines().map_while(Result::ok) {
+                let mut reader = BufReader::new(out);
+                while let Some(line) = read_bounded_line(&mut reader, MAX_LOG_LINE_BYTES) {
                     Self::push_log(&logs_ref, &app_handle, line, false);
                 }
             });
@@ -358,8 +468,8 @@ impl ServerManager {
             let logs_ref = Arc::clone(&self.logs);
             let app_handle = app.clone();
             std::thread::spawn(move || {
-                let reader = BufReader::new(err);
-                for line in reader.lines().map_while(Result::ok) {
+                let mut reader = BufReader::new(err);
+                while let Some(line) = read_bounded_line(&mut reader, MAX_LOG_LINE_BYTES) {
                     Self::push_log(&logs_ref, &app_handle, line, true);
                 }
             });
@@ -384,6 +494,7 @@ impl ServerManager {
     }
 
     pub fn send_command(&self, command: &str) -> Result<(), String> {
+        let valid_cmd = validate_server_command(command)?;
         let mut guard = self
             .inner
             .lock()
@@ -395,49 +506,92 @@ impl ServerManager {
             .stdin
             .as_mut()
             .ok_or_else(|| "Server stdin is not available".to_string())?;
-        writeln!(stdin, "{}", command.trim())
+        writeln!(stdin, "{valid_cmd}")
             .and_then(|_| stdin.flush())
             .map_err(|e| format!("Failed to send command to server: {e}"))
     }
 
-    pub fn stop(&self) -> Result<ServerStatus, String> {
+    fn take_running(&self) -> Result<Option<RunningServer>, String> {
         let mut guard = self
             .inner
             .lock()
             .map_err(|_| "Server manager lock poisoned".to_string())?;
-        if let Some(mut srv) = guard.take() {
-            if let Some(stdin) = srv.stdin.as_mut() {
-                let _ = writeln!(stdin, "/stop");
-                let _ = stdin.flush();
-            }
-            for _ in 0..20 {
-                if let Ok(Some(_)) = srv.child.try_wait() {
-                    return Ok(ServerStatus {
-                        running: false,
-                        pid: None,
-                        port: srv.port,
-                        exe_path: Some(srv.exe_path),
-                        data_path: Some(srv.data_path),
-                    });
-                }
-                std::thread::sleep(std::time::Duration::from_millis(150));
-            }
-            let _ = srv.child.kill();
-            let _ = srv.child.wait();
+        Ok(guard.take())
+    }
+
+    pub fn stop(&self) -> Result<ServerStatus, String> {
+        let Some(mut srv) = self.take_running()? else {
             return Ok(ServerStatus {
                 running: false,
                 pid: None,
-                port: srv.port,
-                exe_path: Some(srv.exe_path),
-                data_path: Some(srv.data_path),
+                port: 42420,
+                exe_path: None,
+                data_path: None,
             });
+        };
+
+        if let Some(stdin) = srv.stdin.as_mut() {
+            let _ = writeln!(stdin, "/stop");
+            let _ = stdin.flush();
         }
+        for _ in 0..20 {
+            if let Ok(Some(_)) = srv.child.try_wait() {
+                return Ok(ServerStatus {
+                    running: false,
+                    pid: None,
+                    port: srv.port,
+                    exe_path: Some(srv.exe_path),
+                    data_path: Some(srv.data_path),
+                });
+            }
+            std::thread::sleep(Duration::from_millis(150));
+        }
+        let _ = srv.child.kill();
+        let _ = srv.child.wait();
         Ok(ServerStatus {
             running: false,
             pid: None,
-            port: 42420,
-            exe_path: None,
-            data_path: None,
+            port: srv.port,
+            exe_path: Some(srv.exe_path),
+            data_path: Some(srv.data_path),
+        })
+    }
+
+    pub async fn stop_async(&self) -> Result<ServerStatus, String> {
+        let Some(mut srv) = self.take_running()? else {
+            return Ok(ServerStatus {
+                running: false,
+                pid: None,
+                port: 42420,
+                exe_path: None,
+                data_path: None,
+            });
+        };
+
+        if let Some(stdin) = srv.stdin.as_mut() {
+            let _ = writeln!(stdin, "/stop");
+            let _ = stdin.flush();
+        }
+        for _ in 0..20 {
+            if let Ok(Some(_)) = srv.child.try_wait() {
+                return Ok(ServerStatus {
+                    running: false,
+                    pid: None,
+                    port: srv.port,
+                    exe_path: Some(srv.exe_path),
+                    data_path: Some(srv.data_path),
+                });
+            }
+            tokio::time::sleep(Duration::from_millis(150)).await;
+        }
+        let _ = srv.child.kill();
+        let _ = srv.child.wait();
+        Ok(ServerStatus {
+            running: false,
+            pid: None,
+            port: srv.port,
+            exe_path: Some(srv.exe_path),
+            data_path: Some(srv.data_path),
         })
     }
 
@@ -511,5 +665,21 @@ mod tests {
         assert_eq!(val["ServerName"], "New Coop");
         assert_eq!(val["Port"], 42421);
         assert_eq!(val["CustomKeepMe"], true);
+    }
+
+    #[test]
+    fn command_and_bounded_line_validation() {
+        assert_eq!(validate_server_command("/op Alice").unwrap(), "/op Alice");
+        assert!(validate_server_command("").is_err());
+        assert!(validate_server_command("/say hi\n/stop").is_err());
+        assert!(validate_server_command("/say hi\r/stop").is_err());
+
+        let long_line = format!("{}END\nnext", "A".repeat(50));
+        let mut reader = BufReader::new(long_line.as_bytes());
+        let first = read_bounded_line(&mut reader, 16).unwrap();
+        assert!(first.starts_with(&"A".repeat(16)));
+        assert!(first.ends_with("[truncated]"));
+        let second = read_bounded_line(&mut reader, 16).unwrap();
+        assert_eq!(second, "next");
     }
 }

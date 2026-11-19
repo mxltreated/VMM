@@ -135,11 +135,13 @@ export const api = {
     source: string;
     profileName?: string | null;
     restoreConfigs: boolean;
+    expectedManifestHash?: string | null;
   }) =>
     invoke<ModpackImportResult>('apply_modpack_import', {
       source: params.source,
       profileName: params.profileName ?? null,
       restoreConfigs: params.restoreConfigs,
+      expectedManifestHash: params.expectedManifestHash ?? null,
     }),
 
   // Multiplayer, P2P & Dedicated Server
@@ -162,38 +164,16 @@ export const api = {
 
   getServerStatus: () => invoke<ServerStatus>('get_server_status'),
   getServerLogs: () => invoke<ServerLogEvent[]>('get_server_logs'),
-  getServerConfig: (customDataPath?: string | null) =>
-    invoke<ServerConfigSummary>('get_server_config', {
-      customDataPath: customDataPath ?? null,
-    }),
-  saveServerConfig: (
-    summary: ServerConfigSummary,
-    customDataPath?: string | null
-  ) =>
-    invoke<void>('save_server_config_cmd', {
-      summary,
-      customDataPath: customDataPath ?? null,
-    }),
-  getServerConfigRaw: (customDataPath?: string | null) =>
-    invoke<string>('get_server_config_raw', {
-      customDataPath: customDataPath ?? null,
-    }),
-  saveServerConfigRaw: (raw: string, customDataPath?: string | null) =>
-    invoke<ServerConfigSummary>('save_server_config_raw_cmd', {
-      raw,
-      customDataPath: customDataPath ?? null,
-    }),
-  startDedicatedServer: (params: {
-    port: number;
-    maxClients: number;
-    customExePath?: string | null;
-    customDataPath?: string | null;
-  }) =>
+  getServerConfig: () => invoke<ServerConfigSummary>('get_server_config'),
+  saveServerConfig: (summary: ServerConfigSummary) =>
+    invoke<void>('save_server_config_cmd', { summary }),
+  getServerConfigRaw: () => invoke<string>('get_server_config_raw'),
+  saveServerConfigRaw: (raw: string) =>
+    invoke<ServerConfigSummary>('save_server_config_raw_cmd', { raw }),
+  startDedicatedServer: (params: { port: number; maxClients: number }) =>
     invoke<ServerStatus>('start_dedicated_server', {
       port: params.port,
       maxClients: params.maxClients,
-      customExePath: params.customExePath ?? null,
-      customDataPath: params.customDataPath ?? null,
     }),
   stopDedicatedServer: () => invoke<ServerStatus>('stop_dedicated_server'),
   sendServerCommand: (command: string) =>
@@ -202,10 +182,11 @@ export const api = {
     listen<ServerLogEvent>('server-log', (event) => cb(event.payload)),
 
   // Remote GitHub App Updates
-  checkAppUpdate: (repo: string) =>
-    invoke<AppUpdateInfo>('check_app_update', { repo }),
+  checkAppUpdate: () => invoke<AppUpdateInfo>('check_app_update'),
   openExternalUrl: (url: string) =>
     invoke<void>('open_external_url', { url }),
-  installAppUpdate: (url: string) =>
-    invoke<void>('install_app_update', { url }),
+  installAppUpdate: (expectedVersion?: string | null) =>
+    invoke<void>('install_app_update', {
+      expectedVersion: expectedVersion ?? null,
+    }),
 };

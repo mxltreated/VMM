@@ -1,29 +1,13 @@
 import { useEffect, useState } from 'react';
 import { ArrowUpCircle, FileText, Loader2, X } from 'lucide-react';
 import { api } from '../api/tauri';
+import { htmlToPlainText } from '../utils/sanitize';
 import type { LocalMod, ModDbRelease } from '../types';
 
 interface ModUpdateChangelogModalProps {
   mod: LocalMod;
   onClose: () => void;
   onConfirmUpdate: (mod: LocalMod) => Promise<void>;
-}
-
-function formatChangelogText(raw: string | null | undefined): string {
-  if (!raw || !raw.trim()) return 'No changelog provided for this release.';
-  return raw
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/p>/gi, '\n\n')
-    .replace(/<\/li>/gi, '\n')
-    .replace(/<li[^>]*>/gi, '• ')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
 }
 
 export function ModUpdateChangelogModal({
@@ -127,7 +111,7 @@ export function ModUpdateChangelogModal({
                   )}
                 </div>
                 <div className="text-zinc-300 whitespace-pre-wrap leading-relaxed">
-                  {formatChangelogText(rel.changelog)}
+                  {htmlToPlainText(rel.changelog)}
                 </div>
               </div>
             ))

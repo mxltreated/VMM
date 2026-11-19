@@ -13,8 +13,8 @@ import {
   Package,
   X,
 } from 'lucide-react';
-import { openUrl } from '@tauri-apps/plugin-opener';
 import { api } from '../api/tauri';
+import { isSafeHttpUrl, sanitizeModDbHtml } from '../utils/sanitize';
 import type { DownloadProgressEvent, ModDbDetail, ModDbRelease, ModDbSummary } from '../types';
 
 const MODDB_ORIGIN = 'https://mods.vintagestory.at';
@@ -37,31 +37,26 @@ function resolveModDbUrl(rawUrl: string): string {
   try {
     return new URL(rawUrl, MODDB_ORIGIN).toString();
   } catch {
-    return rawUrl;
+    return '';
   }
 }
 
 function normalizeExternalUrl(rawUrl: string | null | undefined): string | null {
   const trimmed = rawUrl?.trim();
   if (!trimmed) return null;
-  if (/^https?:\/\//i.test(trimmed)) return trimmed;
-  if (trimmed.startsWith('//')) return `https:${trimmed}`;
-  if (trimmed.startsWith('/')) return `${MODDB_ORIGIN}${trimmed}`;
+  if (/^https?:\/\//i.test(trimmed)) return isSafeHttpUrl(trimmed);
+  if (trimmed.startsWith('//')) return isSafeHttpUrl(`https:${trimmed}`);
+  if (trimmed.startsWith('/')) return isSafeHttpUrl(`${MODDB_ORIGIN}${trimmed}`);
   if (/^[a-z0-9.-]+\.[a-z]{2,}(\/|$)/i.test(trimmed)) {
-    return `https://${trimmed}`;
+    return isSafeHttpUrl(`https://${trimmed}`);
   }
   return null;
 }
 
-function normalizeModDbHtml(html: string): string {
-  return html
-    .replace(/(src|href)=(["'])\/\//gi, '$1=$2https://')
-    .replace(/(src|href)=(["'])\/(?!\/)/gi, `$1=$2${MODDB_ORIGIN}/`);
-}
-
 function openExternalSafely(url: string | null) {
-  if (!url || !/^https?:\/\//i.test(url)) return;
-  void openUrl(url).catch(() => {});
+  const safe = isSafeHttpUrl(url);
+  if (!safe) return;
+  void api.openExternalUrl(safe).catch(() => {});
 }
 
 export function ModDetailDrawer({
@@ -130,7 +125,7 @@ export function ModDetailDrawer({
   }, [modSummary, lightboxImage, onClose]);
 
   const normalizedDescriptionHtml = useMemo(
-    () => (detail?.text ? normalizeModDbHtml(detail.text) : ''),
+    () => (detail?.text ? sanitizeModDbHtml(detail.text) : ''),
     [detail?.text]
   );
 
@@ -164,9 +159,17 @@ export function ModDetailDrawer({
   const latestRelease = detail?.releases[0] ?? null;
   const totalDownloads = detail?.downloads ?? modSummary.downloads;
   const totalFollows = detail?.follows ?? modSummary.follows;
-  const modDbUrl = `${MODDB_ORIGIN}/${
-    detail?.urlalias || modSummary.urlalias || `show/mod/${detail?.assetid ?? modSummary.assetid ?? modSummary.modid}`
-  }`;
+  const safeSummaryLogo = isSafeHttpUrl(modSummary.logo);
+  const rawAlias = (
+    detail?.urlalias ||
+    modSummary.urlalias ||
+    `show/mod/${detail?.assetid ?? modSummary.assetid ?? modSummary.modid}`
+  ).replace(/^\/+/, '');
+  const candidateModDbUrl = isSafeHttpUrl(`${MODDB_ORIGIN}/${rawAlias}`);
+  const modDbUrl =
+    candidateModDbUrl && candidateModDbUrl.startsWith(`${MODDB_ORIGIN}/`)
+      ? candidateModDbUrl
+      : MODDB_ORIGIN;
 
   const handleRichHtmlClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement | null;
@@ -187,7 +190,8 @@ export function ModDetailDrawer({
       const rawHref = anchor.getAttribute('href')?.trim();
       if (!rawHref || rawHref.startsWith('#')) return;
 
-      const resolvedHref = resolveModDbUrl(rawHref);
+      const resolvedHref = isSafeHttpUrl(resolveModDbUrl(rawHref));
+      if (!resolvedHref) return;
       const wrappedImg = anchor.querySelector('img');
       if (
         wrappedImg &&
@@ -207,10 +211,13 @@ export function ModDetailDrawer({
     if (target instanceof HTMLImageElement) {
       const src = target.currentSrc || target.getAttribute('src');
       if (src) {
-        setLightboxImage({
-          src: resolveModDbUrl(src),
-          alt: target.getAttribute('alt') || modSummary.name,
-        });
+        const safeImg = isSafeHttpUrl(resolveModDbUrl(src));
+        if (safeImg) {
+          setLightboxImage({
+            src: safeImg,
+            alt: target.getAttribute('alt') || modSummary.name,
+          });
+        }
       }
     }
   };
@@ -234,9 +241,9 @@ export function ModDetailDrawer({
           {/* Header */}
           <div className="px-6 py-4 border-b border-white/[0.06] flex items-center justify-between gap-4 shrink-0">
             <div className="flex items-center gap-3.5 min-w-0">
-              {modSummary.logo ? (
+              {safeSummaryLogo ? (
                 <img
-                  src={modSummary.logo}
+                  src={safeSummaryLogo}
                   alt={modSummary.name}
                   className="w-11 h-11 rounded-xl object-cover bg-zinc-900 border border-white/[0.08] shrink-0"
                 />
@@ -424,7 +431,7 @@ export function ModDetailDrawer({
                   <div className="space-y-3">
                     {detail.releases.map((rel) => {
                       const normalizedChangelog = rel.changelog?.trim()
-                        ? normalizeModDbHtml(rel.changelog)
+                        ? sanitizeModDbHtml(rel.changelog)
                         : '';
                       return (
                         <div

@@ -7,11 +7,11 @@ use services::launcher::GameLauncher;
 use services::moddb::ModDbClient;
 use services::p2p::P2pManager;
 use services::server::ServerManager;
-use tauri::Manager;
+use tauri::{Manager, RunEvent};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(AppState {
@@ -79,6 +79,14 @@ pub fn run() {
             commands::open_external_url,
             commands::install_app_update,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|app_handle, event| {
+        if let RunEvent::Exit = event {
+            let state = app_handle.state::<AppState>();
+            state.p2p.stop();
+            let _ = state.server.stop();
+        }
+    });
 }

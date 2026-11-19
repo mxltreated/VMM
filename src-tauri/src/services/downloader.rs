@@ -1,11 +1,18 @@
 use crate::models::DownloadProgressEvent;
 use crate::services::local_mods::{disabled_mods_dir, mods_dir};
+use crate::services::security::{
+    build_hardened_http_client, checked_redirect_policy, ensure_no_symlink_escape,
+    is_allowed_moddb_host, validate_mod_filename, validate_moddb_download_url,
+};
 use futures_util::StreamExt;
-use reqwest::Client;
-use std::fs;
+use rand::RngCore;
+use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
 use tauri::{AppHandle, Emitter};
+use zip::ZipArchive;
+
+const MAX_MOD_DOWNLOAD_BYTES: u64 = 512 * 1024 * 1024;
 
 pub async fn download_mod_file(
     app: &AppHandle,
@@ -15,26 +22,36 @@ pub async fn download_mod_file(
     data_path: &Path,
     replace_old_filename: Option<&str>,
 ) -> Result<String, String> {
+    let validated_url = validate_moddb_download_url(url)?;
+    let safe_filename = validate_mod_filename(filename)?;
+    let validated_old = match replace_old_filename {
+        Some(old) => Some(validate_mod_filename(old)?),
+        None => None,
+    };
+
     let target_dir = mods_dir(data_path);
     fs::create_dir_all(&target_dir)
         .map_err(|e| format!("Failed to create Mods directory: {e}"))?;
 
-    let safe_filename = Path::new(filename)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .ok_or_else(|| "Invalid filename".to_string())?
-        .to_string();
-
-    let tmp_path = target_dir.join(format!("{safe_filename}.part"));
     let final_path = target_dir.join(&safe_filename);
+    ensure_no_symlink_escape(&target_dir, &final_path)?;
 
-    let client = Client::builder()
-        .user_agent("VintageStoryModManager/0.1.0")
-        .build()
-        .unwrap_or_else(|_| Client::new());
+    let mut rand_bytes = [0u8; 8];
+    rand::thread_rng().fill_bytes(&mut rand_bytes);
+    let tmp_path = target_dir.join(format!(
+        ".{safe_filename}.{}.{}.part",
+        std::process::id(),
+        hex::encode(rand_bytes)
+    ));
+
+    let client = build_hardened_http_client(
+        concat!("VintageStoryModManager/", env!("CARGO_PKG_VERSION")),
+        180,
+        checked_redirect_policy(5, is_allowed_moddb_host),
+    )?;
 
     let resp = client
-        .get(url)
+        .get(validated_url)
         .send()
         .await
         .map_err(|e| format!("Download request failed: {e}"))?;
@@ -44,22 +61,45 @@ pub async fn download_mod_file(
     }
 
     let total_bytes = resp.content_length();
-    let mut file = fs::File::create(&tmp_path)
+    if let Some(len) = total_bytes {
+        if len > MAX_MOD_DOWNLOAD_BYTES {
+            return Err(format!(
+                "Mod archive exceeds maximum allowed size ({MAX_MOD_DOWNLOAD_BYTES} bytes)"
+            ));
+        }
+    }
+
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp_path)
         .map_err(|e| format!("Failed to create temp file: {e}"))?;
 
     let mut stream = resp.bytes_stream();
     let mut received: u64 = 0;
 
     while let Some(chunk_res) = stream.next().await {
-        let chunk = chunk_res.map_err(|e| {
+        let chunk = match chunk_res {
+            Ok(c) => c,
+            Err(e) => {
+                drop(file);
+                let _ = fs::remove_file(&tmp_path);
+                return Err(format!("Error reading download stream: {e}"));
+            }
+        };
+        received = received.saturating_add(chunk.len() as u64);
+        if received > MAX_MOD_DOWNLOAD_BYTES {
+            drop(file);
             let _ = fs::remove_file(&tmp_path);
-            format!("Error reading download stream: {e}")
-        })?;
-        file.write_all(&chunk).map_err(|e| {
+            return Err(format!(
+                "Mod archive exceeds maximum allowed size ({MAX_MOD_DOWNLOAD_BYTES} bytes)"
+            ));
+        }
+        if let Err(e) = file.write_all(&chunk) {
+            drop(file);
             let _ = fs::remove_file(&tmp_path);
-            format!("Failed to write to temp file: {e}")
-        })?;
-        received += chunk.len() as u64;
+            return Err(format!("Failed to write to temp file: {e}"));
+        }
 
         let _ = app.emit(
             "download-progress",
@@ -74,25 +114,44 @@ pub async fn download_mod_file(
         );
     }
 
-    file.flush()
-        .map_err(|e| format!("Failed to flush downloaded file: {e}"))?;
+    if let Err(e) = file.sync_all() {
+        drop(file);
+        let _ = fs::remove_file(&tmp_path);
+        return Err(format!("Failed to flush downloaded file: {e}"));
+    }
     drop(file);
 
-    if final_path.exists() {
-        let _ = fs::remove_file(&final_path);
+    // Verify archive integrity before replacing any installed mod file
+    {
+        let check_file = fs::File::open(&tmp_path).map_err(|e| {
+            let _ = fs::remove_file(&tmp_path);
+            format!("Failed to open downloaded mod archive: {e}")
+        })?;
+        if let Err(e) = ZipArchive::new(check_file) {
+            let _ = fs::remove_file(&tmp_path);
+            return Err(format!("Downloaded file is not a valid zip archive: {e}"));
+        }
     }
-    fs::rename(&tmp_path, &final_path)
-        .map_err(|e| format!("Failed to finalize mod file: {e}"))?;
 
-    if let Some(old_name) = replace_old_filename {
+    if let Err(e) = fs::rename(&tmp_path, &final_path) {
+        let _ = fs::remove_file(&tmp_path);
+        return Err(format!("Failed to finalize mod file: {e}"));
+    }
+
+    if let Some(old_name) = validated_old {
         if old_name != safe_filename {
-            let old_enabled = target_dir.join(old_name);
-            let old_disabled = disabled_mods_dir(data_path).join(old_name);
-            if old_enabled.exists() {
+            let old_enabled = target_dir.join(&old_name);
+            if ensure_no_symlink_escape(&target_dir, &old_enabled).is_ok() && old_enabled.exists() {
                 let _ = fs::remove_file(old_enabled);
             }
-            if old_disabled.exists() {
-                let _ = fs::remove_file(old_disabled);
+            let disabled_dir = disabled_mods_dir(data_path);
+            if disabled_dir.exists() {
+                let old_disabled = disabled_dir.join(&old_name);
+                if ensure_no_symlink_escape(&disabled_dir, &old_disabled).is_ok()
+                    && old_disabled.exists()
+                {
+                    let _ = fs::remove_file(old_disabled);
+                }
             }
         }
     }
@@ -110,4 +169,18 @@ pub async fn download_mod_file(
     );
 
     Ok(safe_filename)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn download_validation_rules() {
+        assert!(validate_moddb_download_url("https://moddbcdn.vintagestory.at/file.zip").is_ok());
+        assert!(validate_moddb_download_url("http://moddbcdn.vintagestory.at/file.zip").is_err());
+        assert!(validate_moddb_download_url("https://127.0.0.1/file.zip").is_err());
+        assert!(validate_mod_filename("../mod.zip").is_err());
+        assert!(validate_mod_filename("valid_mod.zip").is_ok());
+    }
 }

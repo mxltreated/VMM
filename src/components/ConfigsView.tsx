@@ -23,6 +23,9 @@ interface ConfigsViewProps {
 type JsonPrimitive = string | number | boolean | null;
 type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
 
+const MAX_RENDER_DEPTH = 12;
+const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 function isPlainObject(v: JsonValue): v is { [key: string]: JsonValue } {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
@@ -40,6 +43,7 @@ function updateNestedValue(
     return copy;
   }
   if (isPlainObject(root) && typeof head === 'string') {
+    if (UNSAFE_KEYS.has(head)) return root;
     return {
       ...root,
       [head]: updateNestedValue(root[head], rest, next),
@@ -62,11 +66,13 @@ function JsonField({
   label,
   value,
   path,
+  depth = 0,
   onChange,
 }: {
   label: string;
   value: JsonValue;
   path: (string | number)[];
+  depth?: number;
   onChange: (path: (string | number)[], next: JsonValue) => void;
 }) {
   if (typeof value === 'boolean') {
@@ -144,7 +150,30 @@ function JsonField({
   }
 
   if (isPlainObject(value)) {
-    const entries = Object.entries(value);
+    if (depth >= MAX_RENDER_DEPTH) {
+      return (
+        <div className="p-3 rounded-xl bg-[#161922] border border-white/[0.05] space-y-1.5">
+          <div className="text-xs font-medium text-zinc-200 font-mono">
+            {label} (nested JSON)
+          </div>
+          <textarea
+            rows={4}
+            defaultValue={JSON.stringify(value, null, 2)}
+            onBlur={(e) => {
+              try {
+                const parsed = JSON.parse(e.target.value);
+                onChange(path, parsed);
+              } catch {
+                // keep existing on invalid JSON
+              }
+            }}
+            className="w-full bg-[#0e1015] border border-white/[0.08] rounded-lg p-2 text-[11px] text-zinc-300 font-mono focus:outline-none focus:border-amber-500/40"
+          />
+        </div>
+      );
+    }
+
+    const entries = Object.entries(value).filter(([k]) => !UNSAFE_KEYS.has(k));
     return (
       <details
         open
@@ -160,6 +189,7 @@ function JsonField({
               label={k}
               value={v}
               path={[...path, k]}
+              depth={depth + 1}
               onChange={onChange}
             />
           ))}

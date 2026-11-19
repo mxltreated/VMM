@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Check,
   Copy,
+  Eye,
+  EyeOff,
   Loader2,
   Lock,
   Play,
@@ -63,6 +65,9 @@ export function MultiplayerView({ activeProfile, onError }: MultiplayerViewProps
   const [rawConfigText, setRawConfigText] = useState('');
   const [loadingRaw, setLoadingRaw] = useState(false);
   const [configSaved, setConfigSaved] = useState(false);
+  const [showRoomCode, setShowRoomCode] = useState(false);
+  const [showServerPassword, setShowServerPassword] = useState(false);
+  const [includePasswordInInvite, setIncludePasswordInInvite] = useState(false);
   const logEndRef = useRef<HTMLDivElement | null>(null);
 
   const refreshAll = useCallback(async () => {
@@ -178,7 +183,9 @@ export function MultiplayerView({ activeProfile, onError }: MultiplayerViewProps
       const lines = [
         `Join my Vintage Story P2P Room!`,
         `Room Code (VMM -> Multiplayer -> Join): ${p2pStatus.roomCode}`,
-        serverConfig.password ? `Server Password: ${serverConfig.password}` : null,
+        includePasswordInInvite && serverConfig.password
+          ? `Server Password: ${serverConfig.password}`
+          : null,
         packCode ? `Modpack Code (VMM -> Profiles -> Import): ${packCode}` : null,
       ].filter(Boolean);
       await copyText('full-invite', lines.join('\n'));
@@ -296,9 +303,37 @@ export function MultiplayerView({ activeProfile, onError }: MultiplayerViewProps
 
           {p2pStatus.active && p2pStatus.mode === 'host' && p2pStatus.roomCode ? (
             <div className="space-y-2.5">
-              <div className="p-2.5 rounded-xl bg-[#0e1015] border border-emerald-500/25 font-mono text-[10px] text-emerald-300 break-all max-h-20 overflow-y-auto">
-                {p2pStatus.roomCode}
+              <div className="p-2.5 rounded-xl bg-[#0e1015] border border-emerald-500/25 font-mono text-[10px] text-emerald-300 break-all max-h-20 overflow-y-auto flex items-start justify-between gap-2">
+                <span className="min-w-0 flex-1">
+                  {showRoomCode
+                    ? p2pStatus.roomCode
+                    : 'vmm-p2p:••••••••••••••••••••••••••••••••'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowRoomCode((v) => !v)}
+                  title={showRoomCode ? 'Hide room code' : 'Reveal room code'}
+                  aria-label={showRoomCode ? 'Hide room code' : 'Reveal room code'}
+                  className="p-1 rounded hover:bg-white/[0.08] text-zinc-400 hover:text-zinc-200 shrink-0 cursor-pointer"
+                >
+                  {showRoomCode ? (
+                    <EyeOff className="w-3.5 h-3.5" />
+                  ) : (
+                    <Eye className="w-3.5 h-3.5" />
+                  )}
+                </button>
               </div>
+              {serverConfig.password && (
+                <label className="flex items-center gap-2 text-[11px] text-zinc-400 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={includePasswordInInvite}
+                    onChange={(e) => setIncludePasswordInInvite(e.target.checked)}
+                    className="accent-amber-500"
+                  />
+                  <span>Include server password when copying full invite</span>
+                </label>
+              )}
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   onClick={() => copyText('room-code', p2pStatus.roomCode!)}
@@ -550,15 +585,30 @@ export function MultiplayerView({ activeProfile, onError }: MultiplayerViewProps
 
               <div>
                 <label className="block text-zinc-400 mb-1">Password (optional)</label>
-                <input
-                  type="text"
-                  value={serverConfig.password}
-                  onChange={(e) =>
-                    setServerConfig((c) => ({ ...c, password: e.target.value }))
-                  }
-                  placeholder="Leave blank for open"
-                  className="w-full bg-[#0e1015] border border-white/[0.08] rounded-lg px-3 py-2 text-zinc-200 focus:outline-none focus:border-amber-500/40"
-                />
+                <div className="relative flex items-center">
+                  <input
+                    type={showServerPassword ? 'text' : 'password'}
+                    value={serverConfig.password}
+                    onChange={(e) =>
+                      setServerConfig((c) => ({ ...c, password: e.target.value }))
+                    }
+                    placeholder="Leave blank for open"
+                    className="w-full bg-[#0e1015] border border-white/[0.08] rounded-lg pl-3 pr-9 py-2 text-zinc-200 focus:outline-none focus:border-amber-500/40"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowServerPassword((v) => !v)}
+                    title={showServerPassword ? 'Hide password' : 'Show password'}
+                    aria-label={showServerPassword ? 'Hide password' : 'Show password'}
+                    className="absolute right-2 p-1 rounded text-zinc-500 hover:text-zinc-200 cursor-pointer"
+                  >
+                    {showServerPassword ? (
+                      <EyeOff className="w-3.5 h-3.5" />
+                    ) : (
+                      <Eye className="w-3.5 h-3.5" />
+                    )}
+                  </button>
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3 items-center">

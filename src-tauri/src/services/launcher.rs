@@ -1,7 +1,9 @@
 use crate::models::GameStatus;
-use std::path::Path;
+use crate::services::security::validate_exe_path;
 use std::process::{Child, Command};
 use std::sync::Mutex;
+
+const CLIENT_EXE_NAMES: &[&str] = &["vintagestory.exe", "vintagestory"];
 
 pub struct GameLauncher {
     child: Mutex<Option<Child>>,
@@ -20,11 +22,9 @@ impl GameLauncher {
         data_path: Option<&str>,
         launch_args: Option<&str>,
         max_ram_mb: Option<u32>,
+        connect_address: Option<&str>,
     ) -> Result<GameStatus, String> {
-        let exe = Path::new(exe_path);
-        if !exe.is_file() {
-            return Err(format!("Game executable not found at '{}'", exe_path));
-        }
+        let exe = validate_exe_path(exe_path, CLIENT_EXE_NAMES)?;
 
         let mut guard = self
             .child
@@ -40,7 +40,7 @@ impl GameLauncher {
             }
         }
 
-        let mut cmd = Command::new(exe);
+        let mut cmd = Command::new(&exe);
         if let Some(parent) = exe.parent() {
             cmd.current_dir(parent);
         }
@@ -53,6 +53,9 @@ impl GameLauncher {
             for arg in split_args(extra) {
                 cmd.arg(arg);
             }
+        }
+        if let Some(addr) = connect_address {
+            cmd.arg("--connect").arg(addr);
         }
         if let Some(mb) = max_ram_mb {
             if mb > 0 {

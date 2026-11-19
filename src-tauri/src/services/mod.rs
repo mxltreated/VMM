@@ -7,5 +7,6 @@ pub mod modpack;
 pub mod multiplayer;
 pub mod p2p;
 pub mod profiles;
+pub mod security;
 pub mod server;
 pub mod settings;

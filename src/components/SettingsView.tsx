@@ -311,9 +311,7 @@ export function SettingsView({
               setCheckingAppUpdate(true);
               setAppUpdateErr(null);
               try {
-                const info = await api.checkAppUpdate(
-                  settings.githubRepo || 'mxltreated/VMM'
-                );
+                const info = await api.checkAppUpdate();
                 setAppUpdateInfo(info);
               } catch (err) {
                 setAppUpdateErr(err instanceof Error ? err.message : String(err));
@@ -358,7 +356,7 @@ export function SettingsView({
                     setInstallingAppUpdate(true);
                     setAppUpdateErr(null);
                     try {
-                      await api.installAppUpdate(appUpdateInfo.downloadUrl);
+                      await api.installAppUpdate(appUpdateInfo.latestVersion);
                     } catch (err) {
                       setAppUpdateErr(
                         err instanceof Error ? err.message : String(err)

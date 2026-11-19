@@ -2,18 +2,26 @@ use crate::models::{
     ModDbDetail, ModDbDetailResponse, ModDbFilters, ModDbGameVersionsResponse, ModDbListResponse,
     ModDbSummary, ModDbTagsResponse,
 };
+use crate::services::security::{
+    build_hardened_http_client, checked_redirect_policy, is_allowed_moddb_host, write_file_atomic,
+};
+use futures_util::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 const BASE_URL: &str = "https://mods.vintagestory.at/api";
 const LIST_TTL_SECS: u64 = 15 * 60;
 const DETAIL_TTL_SECS: u64 = 15 * 60;
 const FILTERS_TTL_SECS: u64 = 60 * 60;
+const MAX_CACHED_LISTS: usize = 40;
+const MAX_CACHED_DETAILS: usize = 200;
+const MAX_DISK_CACHE_BYTES: usize = 16 * 1024 * 1024;
+const MAX_API_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 
 fn now_secs() -> u64 {
     SystemTime::now()
@@ -41,22 +49,75 @@ struct DiskCache {
     filters: Option<CacheEntry<ModDbFilters>>,
 }
 
+fn prune_map<T>(map: &mut HashMap<String, CacheEntry<T>>, ttl_secs: u64, max_entries: usize) {
+    map.retain(|_, entry| entry.is_fresh(ttl_secs));
+    if map.len() > max_entries {
+        let mut keys_by_age: Vec<(String, u64)> = map
+            .iter()
+            .map(|(k, v)| (k.clone(), v.fetched_at))
+            .collect();
+        keys_by_age.sort_by_key(|(_, ts)| *ts);
+        let to_remove = map.len() - max_entries;
+        for (key, _) in keys_by_age.into_iter().take(to_remove) {
+            map.remove(&key);
+        }
+    }
+}
+
+fn prune_cache(cache: &mut DiskCache) {
+    prune_map(&mut cache.lists, LIST_TTL_SECS, MAX_CACHED_LISTS);
+    prune_map(&mut cache.details, DETAIL_TTL_SECS, MAX_CACHED_DETAILS);
+    if let Some(filters) = &cache.filters {
+        if !filters.is_fresh(FILTERS_TTL_SECS) {
+            cache.filters = None;
+        }
+    }
+}
+
+async fn read_bounded_json_response<T: for<'de> Deserialize<'de>>(
+    resp: reqwest::Response,
+    label: &str,
+) -> Result<T, String> {
+    if !resp.status().is_success() {
+        return Err(format!("Mod DB returned HTTP {}", resp.status()));
+    }
+    if let Some(len) = resp.content_length() {
+        if len as usize > MAX_API_RESPONSE_BYTES {
+            return Err(format!("{label} exceeds maximum response size"));
+        }
+    }
+    let mut stream = resp.bytes_stream();
+    let mut buf = Vec::new();
+    while let Some(chunk_res) = stream.next().await {
+        let chunk = chunk_res.map_err(|e| format!("Failed reading {label}: {e}"))?;
+        if buf.len().saturating_add(chunk.len()) > MAX_API_RESPONSE_BYTES {
+            return Err(format!("{label} exceeds maximum response size"));
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&buf).map_err(|e| format!("Failed to parse {label}: {e}"))
+}
+
 pub struct ModDbClient {
     client: Client,
     cache: RwLock<DiskCache>,
     cache_path: RwLock<Option<PathBuf>>,
+    persist_lock: Mutex<()>,
 }
 
 impl ModDbClient {
     pub fn new() -> Self {
-        let client = Client::builder()
-            .user_agent("VintageStoryModManager/0.1.0")
-            .build()
-            .unwrap_or_else(|_| Client::new());
+        let client = build_hardened_http_client(
+            concat!("VintageStoryModManager/", env!("CARGO_PKG_VERSION")),
+            30,
+            checked_redirect_policy(5, is_allowed_moddb_host),
+        )
+        .unwrap_or_else(|_| Client::new());
         Self {
             client,
             cache: RwLock::new(DiskCache::default()),
             cache_path: RwLock::new(None),
+            persist_lock: Mutex::new(()),
         }
     }
 
@@ -66,38 +127,69 @@ impl ModDbClient {
             let mut path_guard = self.cache_path.write().await;
             *path_guard = Some(file_path.clone());
         }
-        if let Ok(raw) = fs::read_to_string(&file_path) {
-            if let Ok(parsed) = serde_json::from_str::<DiskCache>(&raw) {
-                let mut cache_guard = self.cache.write().await;
-                *cache_guard = parsed;
+        let loaded = tokio::task::spawn_blocking(move || -> Option<DiskCache> {
+            let meta = fs::metadata(&file_path).ok()?;
+            if meta.len() > MAX_DISK_CACHE_BYTES as u64 {
+                return None;
             }
+            let raw = fs::read(&file_path).ok()?;
+            let mut parsed = serde_json::from_slice::<DiskCache>(&raw).ok()?;
+            prune_cache(&mut parsed);
+            Some(parsed)
+        })
+        .await
+        .ok()
+        .flatten();
+
+        if let Some(parsed) = loaded {
+            let mut cache_guard = self.cache.write().await;
+            *cache_guard = parsed;
         }
     }
 
     async fn persist_cache(&self) {
+        let _persist_guard = self.persist_lock.lock().await;
         let path_opt = self.cache_path.read().await.clone();
         let Some(path) = path_opt else {
             return;
         };
-        if let Some(parent) = path.parent() {
-            let _ = fs::create_dir_all(parent);
+
+        let json = {
+            let mut cache_guard = self.cache.write().await;
+            prune_cache(&mut cache_guard);
+            serde_json::to_vec(&*cache_guard).ok()
+        };
+
+        let Some(bytes) = json else {
+            return;
+        };
+        if bytes.len() > MAX_DISK_CACHE_BYTES {
+            return;
         }
-        let cache_guard = self.cache.read().await;
-        if let Ok(json) = serde_json::to_string(&*cache_guard) {
-            let _ = fs::write(path, json);
-        }
+
+        let _ = tokio::task::spawn_blocking(move || {
+            let _ = write_file_atomic(&path, &bytes);
+        })
+        .await;
     }
 
     pub async fn clear_cache(&self) -> Result<(), String> {
+        let _persist_guard = self.persist_lock.lock().await;
         {
             let mut guard = self.cache.write().await;
             *guard = DiskCache::default();
         }
-        if let Some(path) = self.cache_path.read().await.as_ref() {
-            if path.exists() {
-                fs::remove_file(path)
-                    .map_err(|e| format!("Failed to delete cache file: {e}"))?;
-            }
+        if let Some(path) = self.cache_path.read().await.as_ref().cloned() {
+            tokio::task::spawn_blocking(move || {
+                if path.exists() {
+                    fs::remove_file(path)
+                        .map_err(|e| format!("Failed to delete cache file: {e}"))
+                } else {
+                    Ok(())
+                }
+            })
+            .await
+            .map_err(|e| format!("Failed waiting for cache clear: {e}"))??;
         }
         Ok(())
     }
@@ -162,14 +254,7 @@ impl ModDbClient {
             .await
             .map_err(|e| format!("Mod DB request failed: {e}"))?;
 
-        if !resp.status().is_success() {
-            return Err(format!("Mod DB returned HTTP {}", resp.status()));
-        }
-
-        let parsed: ModDbListResponse = resp
-            .json()
-            .await
-            .map_err(|e| format!("Failed to parse Mod DB response: {e}"))?;
+        let parsed: ModDbListResponse = read_bounded_json_response(resp, "Mod DB response").await?;
 
         {
             let mut guard = self.cache.write().await;
@@ -180,6 +265,7 @@ impl ModDbClient {
                     data: parsed.mods.clone(),
                 },
             );
+            prune_cache(&mut guard);
         }
         self.persist_cache().await;
 
@@ -206,14 +292,7 @@ impl ModDbClient {
             .await
             .map_err(|e| format!("Failed to fetch mod detail: {e}"))?;
 
-        if !resp.status().is_success() {
-            return Err(format!("Mod DB returned HTTP {}", resp.status()));
-        }
-
-        let parsed: ModDbDetailResponse = resp
-            .json()
-            .await
-            .map_err(|e| format!("Failed to parse mod detail: {e}"))?;
+        let parsed: ModDbDetailResponse = read_bounded_json_response(resp, "mod detail").await?;
 
         let detail = parsed
             .mod_detail
@@ -228,6 +307,7 @@ impl ModDbClient {
                     data: detail.clone(),
                 },
             );
+            prune_cache(&mut guard);
         }
         self.persist_cache().await;
 
@@ -251,14 +331,9 @@ impl ModDbClient {
         let tags_resp = tags_res.map_err(|e| format!("Failed to fetch tags: {e}"))?;
         let gv_resp = gv_res.map_err(|e| format!("Failed to fetch game versions: {e}"))?;
 
-        let tags_parsed: ModDbTagsResponse = tags_resp
-            .json()
-            .await
-            .map_err(|e| format!("Failed to parse tags: {e}"))?;
-        let mut gv_parsed: ModDbGameVersionsResponse = gv_resp
-            .json()
-            .await
-            .map_err(|e| format!("Failed to parse game versions: {e}"))?;
+        let tags_parsed: ModDbTagsResponse = read_bounded_json_response(tags_resp, "tags").await?;
+        let mut gv_parsed: ModDbGameVersionsResponse =
+            read_bounded_json_response(gv_resp, "game versions").await?;
 
         gv_parsed.gameversions.reverse();
 
@@ -273,6 +348,7 @@ impl ModDbClient {
                 fetched_at: now_secs(),
                 data: filters.clone(),
             });
+            prune_cache(&mut guard);
         }
         self.persist_cache().await;
 

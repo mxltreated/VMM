@@ -181,6 +181,7 @@ export interface ModpackImportPreview {
   manifest: ModpackManifest;
   items: ModpackImportItem[];
   hasConfigs: boolean;
+  manifestHash: string;
 }
 
 export interface ModpackImportResult {

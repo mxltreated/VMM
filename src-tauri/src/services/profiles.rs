@@ -1,5 +1,6 @@
 use crate::models::{ModProfile, ProfileSettings};
 use crate::services::local_mods::{scan_local_mods, toggle_mod};
+use crate::services::security::write_file_atomic;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
@@ -46,12 +47,10 @@ pub fn load_profiles(config_dir: &Path, data_path: Option<&Path>) -> Result<Vec<
 }
 
 pub fn save_profiles(config_dir: &Path, profiles: &[ModProfile]) -> Result<(), String> {
-    fs::create_dir_all(config_dir)
-        .map_err(|e| format!("Failed to create config directory: {e}"))?;
     let file_path = config_dir.join("profiles.json");
     let json = serde_json::to_string_pretty(profiles)
         .map_err(|e| format!("Failed to serialize profiles: {e}"))?;
-    fs::write(&file_path, json).map_err(|e| format!("Failed to write profiles.json: {e}"))
+    write_file_atomic(&file_path, json.as_bytes())
 }
 
 pub fn create_profile(

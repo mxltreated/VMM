@@ -28,13 +28,14 @@ use crate::services::profiles::{
     switch_profile as svc_switch_profile, sync_mod_in_active_profile,
     update_profile_settings as svc_update_profile_settings,
 };
+use crate::services::security::validate_external_http_url;
 use crate::services::server::{
     default_server_data_path, detect_server_exe, ensure_server_config_exists, load_server_config,
     load_server_config_raw, save_server_config, save_server_config_raw, ServerManager,
 };
 use crate::services::settings::{
     check_github_app_update, detect_vintage_story_paths, download_and_launch_installer,
-    load_settings, save_settings,
+    load_settings, save_settings, OFFICIAL_GITHUB_REPO,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -275,8 +276,6 @@ pub async fn download_mod(
     )
     .await?;
 
-    // If user is on Vanilla, switch active profile to Default or keep Vanilla?
-    // Adding to active profile if not Vanilla ensures it stays enabled on switch.
     if settings.active_profile_id.as_deref() == Some("vanilla") {
         settings.active_profile_id = Some("default".to_string());
         let _ = save_settings(&cfg, &settings);
@@ -330,6 +329,7 @@ pub fn launch_game(app: AppHandle, state: State<'_, AppState>) -> Result<GameSta
         settings.data_path.as_deref(),
         launch_args,
         max_ram_mb,
+        None,
     )
 }
 
@@ -459,6 +459,7 @@ pub async fn apply_modpack_import(
     source: String,
     profile_name: Option<String>,
     restore_configs: bool,
+    expected_manifest_hash: Option<String>,
 ) -> Result<ModpackImportResult, String> {
     let cfg = config_dir(&app)?;
     let (mut settings, dp) = require_data_path(&cfg)?;
@@ -470,6 +471,7 @@ pub async fn apply_modpack_import(
         &source,
         profile_name,
         restore_configs,
+        expected_manifest_hash.as_deref(),
     )
     .await?;
     settings.active_profile_id = Some(res.profile.id.clone());
@@ -573,16 +575,10 @@ pub fn get_server_logs(state: State<'_, AppState>) -> Vec<ServerLogEvent> {
 }
 
 #[tauri::command]
-pub fn get_server_config(
-    app: AppHandle,
-    custom_data_path: Option<String>,
-) -> Result<ServerConfigSummary, String> {
+pub fn get_server_config(app: AppHandle) -> Result<ServerConfigSummary, String> {
     let cfg = config_dir(&app)?;
     let (_, dp) = require_data_path(&cfg)?;
-    let srv_dp = custom_data_path
-        .filter(|s| !s.trim().is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| default_server_data_path(&dp));
+    let srv_dp = default_server_data_path(&dp);
     load_server_config(&srv_dp)
 }
 
@@ -590,29 +586,19 @@ pub fn get_server_config(
 pub fn save_server_config_cmd(
     app: AppHandle,
     summary: ServerConfigSummary,
-    custom_data_path: Option<String>,
 ) -> Result<(), String> {
     let cfg = config_dir(&app)?;
     let (settings, dp) = require_data_path(&cfg)?;
-    let srv_dp = custom_data_path
-        .filter(|s| !s.trim().is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| default_server_data_path(&dp));
+    let srv_dp = default_server_data_path(&dp);
     let exe_path = detect_server_exe(settings.game_exe_path.as_deref());
     save_server_config(&srv_dp, &summary, exe_path.as_deref())
 }
 
 #[tauri::command]
-pub fn get_server_config_raw(
-    app: AppHandle,
-    custom_data_path: Option<String>,
-) -> Result<String, String> {
+pub fn get_server_config_raw(app: AppHandle) -> Result<String, String> {
     let cfg = config_dir(&app)?;
     let (settings, dp) = require_data_path(&cfg)?;
-    let srv_dp = custom_data_path
-        .filter(|s| !s.trim().is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| default_server_data_path(&dp));
+    let srv_dp = default_server_data_path(&dp);
     let exe_path = detect_server_exe(settings.game_exe_path.as_deref());
     load_server_config_raw(&srv_dp, exe_path.as_deref())
 }
@@ -621,14 +607,10 @@ pub fn get_server_config_raw(
 pub fn save_server_config_raw_cmd(
     app: AppHandle,
     raw: String,
-    custom_data_path: Option<String>,
 ) -> Result<ServerConfigSummary, String> {
     let cfg = config_dir(&app)?;
     let (_, dp) = require_data_path(&cfg)?;
-    let srv_dp = custom_data_path
-        .filter(|s| !s.trim().is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| default_server_data_path(&dp));
+    let srv_dp = default_server_data_path(&dp);
     save_server_config_raw(&srv_dp, &raw)?;
     load_server_config(&srv_dp)
 }
@@ -639,19 +621,12 @@ pub fn start_dedicated_server(
     state: State<'_, AppState>,
     port: u16,
     max_clients: u32,
-    custom_exe_path: Option<String>,
-    custom_data_path: Option<String>,
 ) -> Result<ServerStatus, String> {
     let cfg = config_dir(&app)?;
     let (settings, dp) = require_data_path(&cfg)?;
-    let exe_path = custom_exe_path
-        .filter(|s| !s.trim().is_empty())
-        .or_else(|| detect_server_exe(settings.game_exe_path.as_deref()))
-        .ok_or_else(|| "VintagestoryServer.exe could not be found. Please specify its path.".to_string())?;
-    let srv_dp = custom_data_path
-        .filter(|s| !s.trim().is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| default_server_data_path(&dp));
+    let exe_path = detect_server_exe(settings.game_exe_path.as_deref())
+        .ok_or_else(|| "VintagestoryServer.exe could not be found near your game installation.".to_string())?;
+    let srv_dp = default_server_data_path(&dp);
     ensure_server_config_exists(&srv_dp, Some(&exe_path))?;
     let mods = mods_dir(&dp);
     state
@@ -660,8 +635,8 @@ pub fn start_dedicated_server(
 }
 
 #[tauri::command]
-pub fn stop_dedicated_server(state: State<'_, AppState>) -> Result<ServerStatus, String> {
-    state.server.stop()
+pub async fn stop_dedicated_server(state: State<'_, AppState>) -> Result<ServerStatus, String> {
+    state.server.stop_async().await
 }
 
 #[tauri::command]
@@ -670,20 +645,29 @@ pub fn send_server_command(state: State<'_, AppState>, command: String) -> Resul
 }
 
 #[tauri::command]
-pub async fn check_app_update(repo: String) -> Result<AppUpdateInfo, String> {
-    check_github_app_update(&repo).await
+pub async fn check_app_update() -> Result<AppUpdateInfo, String> {
+    check_github_app_update(OFFICIAL_GITHUB_REPO).await
 }
 
 #[tauri::command]
 pub fn open_external_url(app: AppHandle, url: String) -> Result<(), String> {
+    let valid_url = validate_external_http_url(&url)?;
     app.opener()
-        .open_url(url, None::<&str>)
+        .open_url(valid_url.as_str(), None::<&str>)
         .map_err(|e| format!("Failed to open URL: {e}"))
 }
 
 #[tauri::command]
-pub async fn install_app_update(app: AppHandle, url: String) -> Result<(), String> {
-    download_and_launch_installer(&url).await?;
+pub async fn install_app_update(
+    app: AppHandle,
+    expected_version: Option<String>,
+) -> Result<(), String> {
+    let staging_root = app
+        .path()
+        .app_local_data_dir()
+        .or_else(|_| app.path().app_cache_dir())
+        .map_err(|e| format!("Failed to resolve update staging directory: {e}"))?;
+    download_and_launch_installer(&staging_root, expected_version.as_deref()).await?;
     app.exit(0);
     Ok(())
 }

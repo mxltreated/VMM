@@ -70,6 +70,7 @@ export function ProfilesView({
         source: url,
         profileName: `${profile.name} (Synced)`,
         restoreConfigs: false,
+        expectedManifestHash: null,
       });
       await onModpackImported(res);
     } catch (err) {

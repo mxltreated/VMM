@@ -274,6 +274,7 @@ pub struct ModpackImportPreview {
     pub manifest: ModpackManifest,
     pub items: Vec<ModpackImportItem>,
     pub has_configs: bool,
+    pub manifest_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

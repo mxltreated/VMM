@@ -257,6 +257,7 @@ export function ImportModpackModal({
         source: source.trim(),
         profileName: profileName.trim() || preview.manifest.name,
         restoreConfigs,
+        expectedManifestHash: preview.manifestHash,
       });
       await onImported(res);
       onClose();
