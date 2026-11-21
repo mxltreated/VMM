@@ -3,14 +3,20 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type {
   AppSettings,
   AppUpdateInfo,
+  BatchDownloadItem,
+  BatchDownloadResult,
   DetectedPaths,
   DownloadProgressEvent,
+  EnableModItem,
   GameStatus,
   LocalMod,
   ModConfigFile,
   ModDbDetail,
   ModDbFilters,
+  ModDbRelease,
   ModDbSummary,
+  ModDependenciesSummary,
+  ModInstallPlan,
   ModProfile,
   ModpackImportPreview,
   ModpackImportResult,
@@ -81,6 +87,29 @@ export const api = {
       url: params.url,
       filename: params.filename,
       replaceOldFilename: params.replaceOldFilename ?? null,
+    }),
+
+  inspectModDependenciesBatch: (modids: string[]) =>
+    invoke<ModDependenciesSummary[]>('inspect_mod_dependencies_batch', { modids }),
+
+  resolveModInstallPlan: (params: {
+    modid: string;
+    modName: string;
+    release: ModDbRelease;
+  }) =>
+    invoke<ModInstallPlan>('resolve_mod_install_plan', {
+      modid: params.modid,
+      modName: params.modName,
+      release: params.release,
+    }),
+
+  downloadModsBatch: (params: {
+    items: BatchDownloadItem[];
+    enableMods: EnableModItem[];
+  }) =>
+    invoke<BatchDownloadResult>('download_mods_batch', {
+      items: params.items,
+      enableMods: params.enableMods,
     }),
 
   launchGame: () => invoke<GameStatus>('launch_game'),

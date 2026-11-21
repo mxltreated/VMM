@@ -364,7 +364,7 @@ pub async fn load_manifest_from_source(source: &str) -> Result<(ModpackManifest,
     }
 }
 
-fn select_release<'a>(
+pub(crate) fn select_release<'a>(
     detail: &'a ModDbDetail,
     requested_version: Option<&str>,
     pinned: bool,

@@ -71,7 +71,7 @@ fn scan_directory(dir: &Path, enabled: bool, out: &mut Vec<LocalMod>) -> Result<
     Ok(())
 }
 
-fn parse_modinfo_bytes(bytes: &[u8]) -> Option<ModInfo> {
+pub fn parse_modinfo_bytes(bytes: &[u8]) -> Option<ModInfo> {
     let raw = std::str::from_utf8(bytes).ok()?;
     let cleaned = raw.trim_start_matches('\u{feff}');
     serde_json::from_str::<ModInfo>(cleaned).ok()

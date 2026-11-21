@@ -1,8 +1,13 @@
 use crate::models::{
-    AppSettings, AppUpdateInfo, DetectedPaths, GameStatus, LocalMod, ModConfigFile, ModDbDetail,
-    ModDbFilters, ModDbSummary, ModProfile, ModpackImportPreview, ModpackImportResult,
-    ModpackManifest, P2pStatus, ProfileSettings, ServerConfigSummary, ServerLogEvent,
-    ServerStatus,
+    AppSettings, AppUpdateInfo, BatchDownloadError, BatchDownloadItem, BatchDownloadResult,
+    DetectedPaths, DownloadProgressEvent, EnableModItem, GameStatus, LocalMod, ModConfigFile,
+    ModDbDetail, ModDbFilters, ModDbRelease, ModDbSummary, ModDependenciesSummary,
+    ModInstallPlan, ModProfile, ModpackImportPreview, ModpackImportResult, ModpackManifest,
+    P2pStatus, ProfileSettings, ServerConfigSummary, ServerLogEvent, ServerStatus,
+};
+use crate::services::dependencies::{
+    inspect_mod_dependencies_batch as svc_inspect_mod_dependencies_batch,
+    resolve_install_plan as svc_resolve_install_plan,
 };
 use crate::services::downloader::download_mod_file;
 use crate::services::launcher::GameLauncher;
@@ -37,9 +42,10 @@ use crate::services::settings::{
     check_github_app_update, detect_vintage_story_paths, download_and_launch_installer,
     load_settings, save_settings, OFFICIAL_GITHUB_REPO,
 };
+use futures_util::stream::{self, StreamExt};
 use std::fs;
 use std::path::PathBuf;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
 pub struct AppState {
@@ -289,6 +295,136 @@ pub async fn download_mod(
     )?;
 
     Ok(saved_name)
+}
+
+#[tauri::command]
+pub async fn inspect_mod_dependencies_batch(
+    state: State<'_, AppState>,
+    modids: Vec<String>,
+) -> Result<Vec<ModDependenciesSummary>, String> {
+    Ok(svc_inspect_mod_dependencies_batch(&state.moddb, modids).await)
+}
+
+#[tauri::command]
+pub async fn resolve_mod_install_plan(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    modid: String,
+    mod_name: String,
+    release: ModDbRelease,
+) -> Result<ModInstallPlan, String> {
+    let cfg = config_dir(&app)?;
+    let (settings, dp) = require_data_path(&cfg)?;
+
+    let active_profile_gv = load_profiles(&cfg, Some(&dp))
+        .ok()
+        .and_then(|list| {
+            list.into_iter()
+                .find(|p| Some(p.id.as_str()) == settings.active_profile_id.as_deref())
+        })
+        .and_then(|p| p.settings.game_version);
+
+    let preferred_gv = active_profile_gv.or(settings.preferred_game_version);
+
+    svc_resolve_install_plan(
+        &state.moddb,
+        &dp,
+        preferred_gv.as_deref(),
+        &modid,
+        &mod_name,
+        &release,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn download_mods_batch(
+    app: AppHandle,
+    items: Vec<BatchDownloadItem>,
+    enable_mods: Vec<EnableModItem>,
+) -> Result<BatchDownloadResult, String> {
+    let cfg = config_dir(&app)?;
+    let (mut settings, dp) = require_data_path(&cfg)?;
+
+    let mut enabled_modids = Vec::new();
+    let mut failed = Vec::new();
+
+    for item in enable_mods {
+        match fs_toggle_mod(&dp, &item.filename, true) {
+            Ok(()) => enabled_modids.push(item.modid),
+            Err(e) => failed.push(BatchDownloadError {
+                modid: item.modid,
+                filename: item.filename,
+                error: e,
+            }),
+        }
+    }
+
+    let app_ref = &app;
+    let dp_ref = &dp;
+    let results: Vec<(BatchDownloadItem, Result<String, String>)> = stream::iter(items)
+        .map(|item| async move {
+            let res = download_mod_file(
+                app_ref,
+                &item.modid,
+                &item.url,
+                &item.filename,
+                dp_ref,
+                item.replace_old_filename.as_deref(),
+            )
+            .await;
+            if let Err(ref err) = res {
+                let _ = app_ref.emit(
+                    "download-progress",
+                    DownloadProgressEvent {
+                        modid: item.modid.clone(),
+                        filename: item.filename.clone(),
+                        bytes_received: 0,
+                        total_bytes: None,
+                        done: true,
+                        error: Some(err.clone()),
+                    },
+                );
+            }
+            (item, res)
+        })
+        .buffer_unordered(4)
+        .collect()
+        .await;
+
+    let mut succeeded = Vec::new();
+    for (item, res) in results {
+        match res {
+            Ok(_) => succeeded.push(item.modid),
+            Err(e) => failed.push(BatchDownloadError {
+                modid: item.modid,
+                filename: item.filename,
+                error: e,
+            }),
+        }
+    }
+
+    if !succeeded.is_empty() || !enabled_modids.is_empty() {
+        if settings.active_profile_id.as_deref() == Some("vanilla") {
+            settings.active_profile_id = Some("default".to_string());
+            let _ = save_settings(&cfg, &settings);
+        }
+        for modid in succeeded.iter().chain(enabled_modids.iter()) {
+            let _ = sync_mod_in_active_profile(
+                &cfg,
+                &dp,
+                settings.active_profile_id.as_deref(),
+                modid,
+                true,
+            );
+        }
+    }
+
+    Ok(BatchDownloadResult {
+        succeeded,
+        enabled: enabled_modids,
+        failed,
+    })
 }
 
 #[tauri::command]

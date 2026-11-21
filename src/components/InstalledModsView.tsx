@@ -8,7 +8,12 @@ import {
   SlidersHorizontal,
   Trash2,
 } from 'lucide-react';
+import { DependencyTooltipBadge } from './DependencyTooltip';
 import { ModUpdateChangelogModal } from './ModUpdateChangelogModal';
+import {
+  evaluateDependenciesAgainstLocal,
+  splitDependenciesMap,
+} from '../utils/dependencies';
 import type { DownloadProgressEvent, LocalMod, ModConfigFile } from '../types';
 
 interface InstalledModsViewProps {
@@ -48,6 +53,16 @@ export function InstalledModsView({
     () => mods.filter((m) => m.updateAvailable).length,
     [mods]
   );
+
+  const localModsById = useMemo(() => {
+    const map = new Map<string, LocalMod>();
+    for (const m of mods) {
+      if (m.modid) {
+        map.set(m.modid.toLowerCase(), m);
+      }
+    }
+    return map;
+  }, [mods]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -151,6 +166,14 @@ export function InstalledModsView({
                 const base = c.filename.toLowerCase().replace(/[^a-z0-9]/g, '');
                 return cleanModId.length >= 3 && base.includes(cleanModId);
               });
+              const { modDependencies, gameRequirements } = splitDependenciesMap(
+                mod.dependencies
+              );
+              const evaluatedDeps = evaluateDependenciesAgainstLocal(
+                modDependencies,
+                gameRequirements,
+                localModsById
+              );
               return (
                 <div
                   key={`${mod.enabled ? 'e' : 'd'}-${mod.filename}`}
@@ -182,6 +205,10 @@ export function InstalledModsView({
                         <span className="text-[11px] font-mono px-1.5 py-0.5 rounded bg-white/[0.05] text-zinc-400">
                           v{mod.version}
                         </span>
+                        <DependencyTooltipBadge
+                          evaluated={evaluatedDeps}
+                          variant="local"
+                        />
                         {mod.updateAvailable && mod.latestVersion && (
                           <button
                             onClick={() => setPendingUpdateMod(mod)}

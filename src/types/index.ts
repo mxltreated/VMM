@@ -229,3 +229,61 @@ export interface AppUpdateInfo {
   htmlUrl: string;
   downloadUrl: string | null;
 }
+
+export interface ModDependenciesSummary {
+  modid: number;
+  releaseId: number | null;
+  modidStr: string | null;
+  modDependencies: Record<string, string>;
+  gameRequirements: Record<string, string>;
+}
+
+export interface ResolvedDependencyItem {
+  modid: string;
+  name: string;
+  versionRequirement: string;
+  status: 'installed' | 'disabled' | 'download' | 'missing';
+  installedVersion: string | null;
+  installedFilename: string | null;
+  resolvedVersion: string | null;
+  downloadUrl: string | null;
+  filename: string | null;
+  replaceOldFilename: string | null;
+  requiredBy: string[];
+}
+
+export interface ModInstallPlan {
+  primaryModid: string;
+  primaryName: string;
+  primaryVersion: string | null;
+  primaryUrl: string;
+  primaryFilename: string;
+  primaryReplaceOldFilename: string | null;
+  gameRequirements: Record<string, string>;
+  dependencies: ResolvedDependencyItem[];
+  unresolvedWarnings: string[];
+}
+
+export interface BatchDownloadItem {
+  modid: string;
+  url: string;
+  filename: string;
+  replaceOldFilename?: string | null;
+}
+
+export interface EnableModItem {
+  modid: string;
+  filename: string;
+}
+
+export interface BatchDownloadError {
+  modid: string;
+  filename: string;
+  error: string;
+}
+
+export interface BatchDownloadResult {
+  succeeded: string[];
+  enabled: string[];
+  failed: BatchDownloadError[];
+}

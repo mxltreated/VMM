@@ -5,6 +5,7 @@ import { BrowseModsView } from './components/BrowseModsView';
 import { ConfigsView } from './components/ConfigsView';
 import { HeaderBar } from './components/HeaderBar';
 import { InstalledModsView } from './components/InstalledModsView';
+import { InstallWithDepsModal } from './components/InstallWithDepsModal';
 import { ModDetailDrawer } from './components/ModDetailDrawer';
 import { MultiplayerView } from './components/MultiplayerView';
 import { OnboardingModal } from './components/OnboardingModal';
@@ -14,13 +15,16 @@ import { Sidebar } from './components/Sidebar';
 import type {
   AppSettings,
   AppUpdateInfo,
+  BatchDownloadItem,
   DownloadProgressEvent,
+  EnableModItem,
   GameStatus,
   LocalMod,
   ModConfigFile,
   ModDbDetail,
   ModDbRelease,
   ModDbSummary,
+  ModInstallPlan,
   ModProfile,
   ModpackImportResult,
   NavTab,
@@ -52,6 +56,8 @@ export function App() {
   });
   const [downloads, setDownloads] = useState<Record<string, DownloadProgressEvent>>({});
   const [selectedMod, setSelectedMod] = useState<ModDbSummary | null>(null);
+  const [pendingInstallPlan, setPendingInstallPlan] = useState<ModInstallPlan | null>(null);
+  const [resolvingModId, setResolvingModId] = useState<number | null>(null);
   const [bannerError, setBannerError] = useState<string | null>(null);
   const [appUpdate, setAppUpdate] = useState<AppUpdateInfo | null>(null);
   const [installingUpdate, setInstallingUpdate] = useState(false);
@@ -191,25 +197,65 @@ export function App() {
   const handleInstallRelease = async (detail: ModDbDetail, release: ModDbRelease) => {
     if (!release.mainfile || !release.filename) return;
     const modid = release.modidstr || String(detail.modid);
-    const existing = localMods.find(
-      (m) => m.modid.toLowerCase() === modid.toLowerCase()
-    );
+    setResolvingModId(detail.modid);
+    setBannerError(null);
     try {
-      await api.downloadMod({
+      const plan = await api.resolveModInstallPlan({
         modid,
-        url: release.mainfile,
-        filename: release.filename,
-        replaceOldFilename: existing?.filename ?? null,
+        modName: detail.name,
+        release,
+      });
+      const hasActionableDeps = plan.dependencies.some(
+        (d) =>
+          d.status === 'download' ||
+          d.status === 'disabled' ||
+          d.status === 'missing'
+      );
+      if (hasActionableDeps) {
+        setPendingInstallPlan(plan);
+        return;
+      }
+
+      await api.downloadMod({
+        modid: plan.primaryModid,
+        url: plan.primaryUrl,
+        filename: plan.primaryFilename,
+        replaceOldFilename: plan.primaryReplaceOldFilename,
       });
       const updatedSettings = await api.getSettings();
       setSettings(updatedSettings);
       await Promise.all([refreshLocalMods(), refreshProfiles()]);
     } catch (err) {
       setBannerError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setResolvingModId(null);
+    }
+  };
+
+  const handleConfirmBatchInstall = async (
+    items: BatchDownloadItem[],
+    enableMods: EnableModItem[]
+  ) => {
+    setBannerError(null);
+    try {
+      const result = await api.downloadModsBatch({ items, enableMods });
+      const updatedSettings = await api.getSettings();
+      setSettings(updatedSettings);
+      await Promise.all([refreshLocalMods(), refreshProfiles()]);
+      if (result.failed.length > 0) {
+        const msg = result.failed
+          .map((f) => `${f.filename || f.modid}: ${f.error}`)
+          .join('; ');
+        setBannerError(`Some downloads failed: ${msg}`);
+      }
+    } catch (err) {
+      setBannerError(err instanceof Error ? err.message : String(err));
     }
   };
 
   const handleQuickInstall = async (summary: ModDbSummary) => {
+    setResolvingModId(summary.modid);
+    setBannerError(null);
     try {
       const detail = await api.getModDbDetail(String(summary.modid));
       const latest = detail.releases[0];
@@ -220,6 +266,8 @@ export function App() {
       await handleInstallRelease(detail, latest);
     } catch (err) {
       setBannerError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setResolvingModId(null);
     }
   };
 
@@ -432,6 +480,7 @@ export function App() {
             <BrowseModsView
               installedMods={localMods}
               downloads={downloads}
+              resolvingModId={resolvingModId}
               onSelectMod={setSelectedMod}
               onQuickInstall={handleQuickInstall}
             />
@@ -495,10 +544,23 @@ export function App() {
 
       <ModDetailDrawer
         modSummary={selectedMod}
+        installedMods={localMods}
         downloads={downloads}
+        resolvingInstall={
+          Boolean(selectedMod && resolvingModId === selectedMod.modid)
+        }
         onClose={() => setSelectedMod(null)}
         onInstallRelease={handleInstallRelease}
       />
+
+      {pendingInstallPlan && (
+        <InstallWithDepsModal
+          plan={pendingInstallPlan}
+          downloads={downloads}
+          onClose={() => setPendingInstallPlan(null)}
+          onConfirmInstall={handleConfirmBatchInstall}
+        />
+      )}
 
       {showOnboarding && (
         <OnboardingModal

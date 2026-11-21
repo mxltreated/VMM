@@ -336,3 +336,86 @@ pub struct AppUpdateInfo {
     pub html_url: String,
     pub download_url: Option<String>,
 }
+
+// --- Dependency Detection & Simultaneous Download Models ---
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteModInfo {
+    pub modid: Option<String>,
+    pub version: Option<String>,
+    #[serde(default)]
+    pub dependencies: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModDependenciesSummary {
+    pub modid: i64,
+    pub release_id: Option<i64>,
+    pub modid_str: Option<String>,
+    pub mod_dependencies: HashMap<String, String>,
+    pub game_requirements: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvedDependencyItem {
+    pub modid: String,
+    pub name: String,
+    pub version_requirement: String,
+    pub status: String, // "installed" | "disabled" | "download" | "missing"
+    pub installed_version: Option<String>,
+    pub installed_filename: Option<String>,
+    pub resolved_version: Option<String>,
+    pub download_url: Option<String>,
+    pub filename: Option<String>,
+    pub replace_old_filename: Option<String>,
+    pub required_by: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModInstallPlan {
+    pub primary_modid: String,
+    pub primary_name: String,
+    pub primary_version: Option<String>,
+    pub primary_url: String,
+    pub primary_filename: String,
+    pub primary_replace_old_filename: Option<String>,
+    pub game_requirements: HashMap<String, String>,
+    pub dependencies: Vec<ResolvedDependencyItem>,
+    pub unresolved_warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchDownloadItem {
+    pub modid: String,
+    pub url: String,
+    pub filename: String,
+    pub replace_old_filename: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnableModItem {
+    pub modid: String,
+    pub filename: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchDownloadError {
+    pub modid: String,
+    pub filename: String,
+    pub error: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchDownloadResult {
+    pub succeeded: Vec<String>,
+    pub enabled: Vec<String>,
+    pub failed: Vec<BatchDownloadError>,
+}

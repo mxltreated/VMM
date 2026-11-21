@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Check,
   ChevronDown,
@@ -15,17 +15,21 @@ import {
   X,
 } from 'lucide-react';
 import { api } from '../api/tauri';
+import { DependencyTooltipBadge } from './DependencyTooltip';
+import { evaluateDependenciesAgainstLocal } from '../utils/dependencies';
 import { isSafeHttpUrl } from '../utils/sanitize';
 import type {
   DownloadProgressEvent,
   LocalMod,
   ModDbFilters,
   ModDbSummary,
+  ModDependenciesSummary,
 } from '../types';
 
 interface BrowseModsViewProps {
   installedMods: LocalMod[];
   downloads: Record<string, DownloadProgressEvent>;
+  resolvingModId?: number | null;
   onSelectMod: (mod: ModDbSummary) => void;
   onQuickInstall: (mod: ModDbSummary) => void;
 }
@@ -33,6 +37,7 @@ interface BrowseModsViewProps {
 export function BrowseModsView({
   installedMods,
   downloads,
+  resolvingModId = null,
   onSelectMod,
   onQuickInstall,
 }: BrowseModsViewProps) {
@@ -49,16 +54,95 @@ export function BrowseModsView({
   const [refreshTick, setRefreshTick] = useState(0);
   const [tagMenuOpen, setTagMenuOpen] = useState(false);
   const [featuredIndex, setFeaturedIndex] = useState(0);
+  const [depSummaries, setDepSummaries] = useState<
+    Record<number, ModDependenciesSummary>
+  >({});
   const forceRefreshRef = useRef(false);
   const tagMenuRef = useRef<HTMLDivElement>(null);
+  const requestedDepIdsRef = useRef<Set<number>>(new Set());
+  const pendingDepIdsRef = useRef<Set<number>>(new Set());
+  const depBatchTimerRef = useRef<number | null>(null);
+  const cardObserverRef = useRef<IntersectionObserver | null>(null);
 
-  const installedModIds = useMemo(() => {
-    const set = new Set<string>();
+  const installedModsById = useMemo(() => {
+    const map = new Map<string, LocalMod>();
     for (const m of installedMods) {
-      if (m.modid) set.add(m.modid.toLowerCase());
+      if (m.modid) map.set(m.modid.toLowerCase(), m);
     }
-    return set;
+    return map;
   }, [installedMods]);
+
+  const installedModIds = useMemo(
+    () => new Set(installedModsById.keys()),
+    [installedModsById]
+  );
+
+  useEffect(() => {
+    const flushPendingDeps = () => {
+      if (pendingDepIdsRef.current.size === 0) return;
+      const batch = Array.from(pendingDepIdsRef.current).slice(0, 12);
+      for (const id of batch) {
+        pendingDepIdsRef.current.delete(id);
+        requestedDepIdsRef.current.add(id);
+      }
+      api
+        .inspectModDependenciesBatch(batch.map(String))
+        .then((results) => {
+          if (results.length === 0) return;
+          setDepSummaries((prev) => {
+            const next = { ...prev };
+            for (const r of results) {
+              next[r.modid] = r;
+            }
+            return next;
+          });
+        })
+        .catch(() => {});
+
+      if (pendingDepIdsRef.current.size > 0) {
+        depBatchTimerRef.current = window.setTimeout(flushPendingDeps, 180);
+      }
+    };
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        let added = false;
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          const rawId = (entry.target as HTMLElement).dataset.modid;
+          const modid = rawId ? Number(rawId) : NaN;
+          if (
+            Number.isFinite(modid) &&
+            !requestedDepIdsRef.current.has(modid) &&
+            !pendingDepIdsRef.current.has(modid)
+          ) {
+            pendingDepIdsRef.current.add(modid);
+            added = true;
+          }
+        }
+        if (added) {
+          if (depBatchTimerRef.current !== null) {
+            window.clearTimeout(depBatchTimerRef.current);
+          }
+          depBatchTimerRef.current = window.setTimeout(flushPendingDeps, 160);
+        }
+      },
+      { rootMargin: '120px' }
+    );
+    cardObserverRef.current = observer;
+    return () => {
+      observer.disconnect();
+      if (depBatchTimerRef.current !== null) {
+        window.clearTimeout(depBatchTimerRef.current);
+      }
+    };
+  }, []);
+
+  const observeModCard = useCallback((el: HTMLDivElement | null) => {
+    if (el && cardObserverRef.current) {
+      cardObserverRef.current.observe(el);
+    }
+  }, []);
 
   useEffect(() => {
     api.getModDbFilters().then(setFilters).catch(() => {});
@@ -370,12 +454,23 @@ export function BrowseModsView({
                 );
                 const dlKey = mod.modidstrs[0] || String(mod.modid);
                 const dl = downloads[dlKey] || downloads[String(mod.modid)];
-                const isDownloading = Boolean(dl && !dl.done);
+                const isDownloading =
+                  Boolean(dl && !dl.done) || resolvingModId === mod.modid;
                 const safeLogo = isSafeHttpUrl(mod.logo);
+                const depSummary = depSummaries[mod.modid];
+                const evaluatedDeps = depSummary
+                  ? evaluateDependenciesAgainstLocal(
+                      depSummary.modDependencies,
+                      depSummary.gameRequirements,
+                      installedModsById
+                    )
+                  : null;
 
                 return (
                   <div
                     key={`feat-${mod.modid}`}
+                    ref={observeModCard}
+                    data-modid={mod.modid}
                     onClick={() => onSelectMod(mod)}
                     className="group p-4 rounded-2xl bg-gradient-to-br from-amber-500/[0.09] via-[#141720] to-[#12151c] border border-amber-500/25 hover:border-amber-500/50 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-amber-500/5 transition-all duration-200 cursor-pointer flex flex-col justify-between gap-3"
                   >
@@ -420,10 +515,19 @@ export function BrowseModsView({
                     </div>
 
                     <div className="pt-2.5 border-t border-white/[0.06] flex items-center justify-between gap-2">
-                      <span className="text-[11px] text-zinc-400 tabular-nums truncate">
-                        {(mod.downloads ?? 0).toLocaleString()} dl •{' '}
-                        {(mod.follows ?? 0).toLocaleString()} follows
-                      </span>
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-[11px] text-zinc-400 tabular-nums truncate">
+                          {(mod.downloads ?? 0).toLocaleString()} dl •{' '}
+                          {(mod.follows ?? 0).toLocaleString()} follows
+                        </span>
+                        {evaluatedDeps && evaluatedDeps.modDeps.length > 0 && (
+                          <DependencyTooltipBadge
+                            evaluated={evaluatedDeps}
+                            variant="remote"
+                            compact
+                          />
+                        )}
+                      </div>
 
                       <button
                         onClick={(e) => {
@@ -488,16 +592,27 @@ export function BrowseModsView({
                 );
                 const dlKey = mod.modidstrs[0] || String(mod.modid);
                 const dl = downloads[dlKey] || downloads[String(mod.modid)];
-                const isDownloading = Boolean(dl && !dl.done);
+                const isDownloading =
+                  Boolean(dl && !dl.done) || resolvingModId === mod.modid;
                 const pct =
                   dl && dl.totalBytes
                     ? Math.min(100, Math.round((dl.bytesReceived / dl.totalBytes) * 100))
                     : null;
                 const safeLogo = isSafeHttpUrl(mod.logo);
+                const depSummary = depSummaries[mod.modid];
+                const evaluatedDeps = depSummary
+                  ? evaluateDependenciesAgainstLocal(
+                      depSummary.modDependencies,
+                      depSummary.gameRequirements,
+                      installedModsById
+                    )
+                  : null;
 
                 return (
                   <div
                     key={mod.modid}
+                    ref={observeModCard}
+                    data-modid={mod.modid}
                     onClick={() => onSelectMod(mod)}
                     className="group flex flex-col justify-between p-4 rounded-xl bg-[#141720] border border-white/[0.06] hover:border-amber-500/35 hover:-translate-y-0.5 hover:bg-[#161a24] transition-all duration-200 cursor-pointer"
                   >
@@ -542,9 +657,18 @@ export function BrowseModsView({
                     </div>
 
                     <div className="mt-4 pt-3 border-t border-white/[0.05] flex items-center justify-between gap-2">
-                      <span className="text-[11px] text-zinc-500 tabular-nums">
-                        {(mod.downloads ?? 0).toLocaleString()} downloads
-                      </span>
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-[11px] text-zinc-500 tabular-nums truncate">
+                          {(mod.downloads ?? 0).toLocaleString()} downloads
+                        </span>
+                        {evaluatedDeps && evaluatedDeps.modDeps.length > 0 && (
+                          <DependencyTooltipBadge
+                            evaluated={evaluatedDeps}
+                            variant="remote"
+                            compact
+                          />
+                        )}
+                      </div>
 
                       <button
                         onClick={(e) => {

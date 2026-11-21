@@ -1,27 +1,45 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AlertTriangle,
   BookOpen,
   Bug,
+  CheckCircle2,
   Code2,
   Download,
   ExternalLink,
   FileText,
+  GitBranch,
   Globe,
   Loader2,
   Maximize2,
   Minimize2,
   Package,
+  PauseCircle,
   X,
 } from 'lucide-react';
 import { api } from '../api/tauri';
+import { DependencyTooltipBadge } from './DependencyTooltip';
+import {
+  evaluateDependenciesAgainstLocal,
+  formatVersionRequirement,
+} from '../utils/dependencies';
 import { isSafeHttpUrl, sanitizeModDbHtml } from '../utils/sanitize';
-import type { DownloadProgressEvent, ModDbDetail, ModDbRelease, ModDbSummary } from '../types';
+import type {
+  DownloadProgressEvent,
+  LocalMod,
+  ModDbDetail,
+  ModDbRelease,
+  ModDbSummary,
+  ModDependenciesSummary,
+} from '../types';
 
 const MODDB_ORIGIN = 'https://mods.vintagestory.at';
 
 interface ModDetailDrawerProps {
   modSummary: ModDbSummary | null;
+  installedMods: LocalMod[];
   downloads: Record<string, DownloadProgressEvent>;
+  resolvingInstall?: boolean;
   onClose: () => void;
   onInstallRelease: (detail: ModDbDetail, release: ModDbRelease) => void;
 }
@@ -61,11 +79,14 @@ function openExternalSafely(url: string | null) {
 
 export function ModDetailDrawer({
   modSummary,
+  installedMods,
   downloads,
+  resolvingInstall = false,
   onClose,
   onInstallRelease,
 }: ModDetailDrawerProps) {
   const [detail, setDetail] = useState<ModDbDetail | null>(null);
+  const [depSummary, setDepSummary] = useState<ModDependenciesSummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -73,9 +94,18 @@ export function ModDetailDrawer({
   const [lightboxImage, setLightboxImage] = useState<LightboxState | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
+  const installedModsById = useMemo(() => {
+    const map = new Map<string, LocalMod>();
+    for (const m of installedMods) {
+      if (m.modid) map.set(m.modid.toLowerCase(), m);
+    }
+    return map;
+  }, [installedMods]);
+
   useEffect(() => {
     setActiveTab('description');
     setLightboxImage(null);
+    setDepSummary(null);
     if (scrollContainerRef.current) {
       scrollContainerRef.current.scrollTop = 0;
     }
@@ -91,7 +121,16 @@ export function ModDetailDrawer({
     api
       .getModDbDetail(String(modSummary.modid))
       .then((d) => {
-        if (!cancelled) setDetail(d);
+        if (cancelled) return;
+        setDetail(d);
+        api
+          .inspectModDependenciesBatch([String(d.modid)])
+          .then((res) => {
+            if (!cancelled && res.length > 0) {
+              setDepSummary(res[0]);
+            }
+          })
+          .catch(() => {});
       })
       .catch((err) => {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err));
@@ -146,11 +185,23 @@ export function ModDetailDrawer({
     );
   }, [detail]);
 
+  const evaluatedDeps = useMemo(
+    () =>
+      depSummary
+        ? evaluateDependenciesAgainstLocal(
+            depSummary.modDependencies,
+            depSummary.gameRequirements,
+            installedModsById
+          )
+        : null,
+    [depSummary, installedModsById]
+  );
+
   if (!modSummary) return null;
 
   const dlKey = modSummary.modidstrs[0] || String(modSummary.modid);
   const dl = downloads[dlKey] || downloads[String(modSummary.modid)];
-  const isDownloading = Boolean(dl && !dl.done);
+  const isDownloading = Boolean(dl && !dl.done) || resolvingInstall;
   const pct =
     dl && dl.totalBytes
       ? Math.min(100, Math.round((dl.bytesReceived / dl.totalBytes) * 100))
@@ -261,6 +312,12 @@ export function ModDetailDrawer({
                     <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-white/[0.06] text-zinc-300 shrink-0">
                       {modSummary.side}
                     </span>
+                  )}
+                  {evaluatedDeps && evaluatedDeps.modDeps.length > 0 && (
+                    <DependencyTooltipBadge
+                      evaluated={evaluatedDeps}
+                      variant="remote"
+                    />
                   )}
                 </div>
                 <p className="text-xs text-zinc-400 truncate mt-0.5">
@@ -404,6 +461,61 @@ export function ModDetailDrawer({
                             {t}
                           </span>
                         ))}
+                      </div>
+                    )}
+
+                    {evaluatedDeps && evaluatedDeps.modDeps.length > 0 && (
+                      <div className="p-4 rounded-xl bg-[#161922] border border-amber-500/20 space-y-2.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 text-xs font-semibold text-zinc-100">
+                            <GitBranch className="w-3.5 h-3.5 text-amber-400" />
+                            <span>
+                              Mod Dependencies ({evaluatedDeps.modDeps.length})
+                            </span>
+                          </div>
+                          {(evaluatedDeps.gameRequirements.game ||
+                            evaluatedDeps.gameRequirements.Game) && (
+                            <span className="text-[11px] font-mono text-zinc-400">
+                              Requires VS{' '}
+                              {evaluatedDeps.gameRequirements.game ||
+                                evaluatedDeps.gameRequirements.Game}
+                            </span>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {evaluatedDeps.modDeps.map((dep) => (
+                            <div
+                              key={dep.modid}
+                              className="flex items-center justify-between gap-2 rounded-lg bg-[#0e1015] border border-white/[0.06] px-3 py-2 text-xs"
+                            >
+                              <div className="min-w-0">
+                                <div className="font-medium text-zinc-100 truncate">
+                                  {dep.name}
+                                </div>
+                                <div className="text-[10px] font-mono text-zinc-400 truncate">
+                                  {dep.modid} •{' '}
+                                  {formatVersionRequirement(dep.requiredVersion)}
+                                </div>
+                              </div>
+                              {dep.status === 'installed' ? (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/25 shrink-0">
+                                  <CheckCircle2 className="w-2.5 h-2.5" />
+                                  <span>Installed</span>
+                                </span>
+                              ) : dep.status === 'disabled' ? (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/25 shrink-0">
+                                  <PauseCircle className="w-2.5 h-2.5" />
+                                  <span>Disabled</span>
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-300 border border-rose-500/25 shrink-0">
+                                  <AlertTriangle className="w-2.5 h-2.5" />
+                                  <span>Not Installed</span>
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     )}
 

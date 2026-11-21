@@ -1,6 +1,6 @@
 use crate::models::{
     ModDbDetail, ModDbDetailResponse, ModDbFilters, ModDbGameVersionsResponse, ModDbListResponse,
-    ModDbSummary, ModDbTagsResponse,
+    ModDbSummary, ModDbTagsResponse, RemoteModInfo,
 };
 use crate::services::security::{
     build_hardened_http_client, checked_redirect_policy, is_allowed_moddb_host, write_file_atomic,
@@ -18,8 +18,10 @@ const BASE_URL: &str = "https://mods.vintagestory.at/api";
 const LIST_TTL_SECS: u64 = 15 * 60;
 const DETAIL_TTL_SECS: u64 = 15 * 60;
 const FILTERS_TTL_SECS: u64 = 60 * 60;
+const RELEASE_MODINFO_TTL_SECS: u64 = 7 * 24 * 60 * 60;
 const MAX_CACHED_LISTS: usize = 40;
 const MAX_CACHED_DETAILS: usize = 200;
+const MAX_CACHED_RELEASE_MODINFOS: usize = 1000;
 const MAX_DISK_CACHE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_API_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 
@@ -47,6 +49,8 @@ struct DiskCache {
     lists: HashMap<String, CacheEntry<Vec<ModDbSummary>>>,
     details: HashMap<String, CacheEntry<ModDbDetail>>,
     filters: Option<CacheEntry<ModDbFilters>>,
+    #[serde(default)]
+    release_modinfo: HashMap<String, CacheEntry<RemoteModInfo>>,
 }
 
 fn prune_map<T>(map: &mut HashMap<String, CacheEntry<T>>, ttl_secs: u64, max_entries: usize) {
@@ -67,6 +71,11 @@ fn prune_map<T>(map: &mut HashMap<String, CacheEntry<T>>, ttl_secs: u64, max_ent
 fn prune_cache(cache: &mut DiskCache) {
     prune_map(&mut cache.lists, LIST_TTL_SECS, MAX_CACHED_LISTS);
     prune_map(&mut cache.details, DETAIL_TTL_SECS, MAX_CACHED_DETAILS);
+    prune_map(
+        &mut cache.release_modinfo,
+        RELEASE_MODINFO_TTL_SECS,
+        MAX_CACHED_RELEASE_MODINFOS,
+    );
     if let Some(filters) = &cache.filters {
         if !filters.is_fresh(FILTERS_TTL_SECS) {
             cache.filters = None;
@@ -353,5 +362,33 @@ impl ModDbClient {
         self.persist_cache().await;
 
         Ok(filters)
+    }
+
+    pub fn http_client(&self) -> &Client {
+        &self.client
+    }
+
+    pub async fn get_cached_release_modinfo(&self, key: &str) -> Option<RemoteModInfo> {
+        let guard = self.cache.read().await;
+        guard
+            .release_modinfo
+            .get(key)
+            .filter(|entry| entry.is_fresh(RELEASE_MODINFO_TTL_SECS))
+            .map(|entry| entry.data.clone())
+    }
+
+    pub async fn put_cached_release_modinfo(&self, key: String, info: RemoteModInfo) {
+        {
+            let mut guard = self.cache.write().await;
+            guard.release_modinfo.insert(
+                key,
+                CacheEntry {
+                    fetched_at: now_secs(),
+                    data: info,
+                },
+            );
+            prune_cache(&mut guard);
+        }
+        self.persist_cache().await;
     }
 }

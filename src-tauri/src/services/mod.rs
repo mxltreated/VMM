@@ -1,3 +1,4 @@
+pub mod dependencies;
 pub mod downloader;
 pub mod launcher;
 pub mod local_mods;
