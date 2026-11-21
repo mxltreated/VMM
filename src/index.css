@@ -338,3 +338,312 @@
 .mod-description-content details > :last-child:not(summary) {
   padding-bottom: 0.85rem;
 }
+
+/* ========================
+   VMM Themes
+   ======================== */
+
+:root,
+:root[data-theme="forge-ember"] {
+  color-scheme: dark;
+  --vmm-bg-app: #0e1015;
+  --vmm-bg-sidebar: #12151c;
+  --vmm-bg-surface: #141720;
+  --vmm-bg-card: #161922;
+  --vmm-bg-elevated: #1c202c;
+  --vmm-bg-inset: #0f1117;
+  --vmm-bg-hover: #171b26;
+  --vmm-accent: #f59e0b;
+  --vmm-accent-hover: #fbbf24;
+  --vmm-accent-text: #fcd34d;
+  --vmm-accent-400: #fbbf24;
+  --vmm-accent-soft: rgba(245, 158, 11, 0.14);
+  --vmm-accent-soft-strong: rgba(245, 158, 11, 0.24);
+  --vmm-accent-border: rgba(245, 158, 11, 0.35);
+}
+
+:root[data-theme="temporal-rift"] {
+  color-scheme: dark;
+  --vmm-bg-app: #091017;
+  --vmm-bg-sidebar: #0d151e;
+  --vmm-bg-surface: #101a24;
+  --vmm-bg-card: #13202c;
+  --vmm-bg-elevated: #192938;
+  --vmm-bg-inset: #080e14;
+  --vmm-bg-hover: #152432;
+  --vmm-accent: #14b8a6;
+  --vmm-accent-hover: #2dd4bf;
+  --vmm-accent-text: #5eead4;
+  --vmm-accent-400: #2dd4bf;
+  --vmm-accent-soft: rgba(20, 184, 166, 0.15);
+  --vmm-accent-soft-strong: rgba(20, 184, 166, 0.25);
+  --vmm-accent-border: rgba(20, 184, 166, 0.36);
+}
+
+:root[data-theme="rustworks"] {
+  color-scheme: dark;
+  --vmm-bg-app: #130f0e;
+  --vmm-bg-sidebar: #181312;
+  --vmm-bg-surface: #1c1614;
+  --vmm-bg-card: #221a18;
+  --vmm-bg-elevated: #2a201d;
+  --vmm-bg-inset: #100c0b;
+  --vmm-bg-hover: #251c19;
+  --vmm-accent: #ea580c;
+  --vmm-accent-hover: #f97316;
+  --vmm-accent-text: #fdba74;
+  --vmm-accent-400: #fb923c;
+  --vmm-accent-soft: rgba(234, 88, 12, 0.16);
+  --vmm-accent-soft-strong: rgba(234, 88, 12, 0.26);
+  --vmm-accent-border: rgba(234, 88, 12, 0.38);
+}
+
+:root[data-theme="redwood-forest"] {
+  color-scheme: dark;
+  --vmm-bg-app: #0a120f;
+  --vmm-bg-sidebar: #0e1814;
+  --vmm-bg-surface: #111c17;
+  --vmm-bg-card: #15231c;
+  --vmm-bg-elevated: #1b2c23;
+  --vmm-bg-inset: #080f0c;
+  --vmm-bg-hover: #17271f;
+  --vmm-accent: #10b981;
+  --vmm-accent-hover: #34d399;
+  --vmm-accent-text: #6ee7b7;
+  --vmm-accent-400: #34d399;
+  --vmm-accent-soft: rgba(16, 185, 129, 0.15);
+  --vmm-accent-soft-strong: rgba(16, 185, 129, 0.25);
+  --vmm-accent-border: rgba(16, 185, 129, 0.36);
+}
+
+:root[data-theme="seraph-light"] {
+  color-scheme: light;
+  --vmm-bg-app: #f3ede2;
+  --vmm-bg-sidebar: #ebe3d5;
+  --vmm-bg-surface: #faf6ee;
+  --vmm-bg-card: #f6f0e4;
+  --vmm-bg-elevated: #e8dfd0;
+  --vmm-bg-inset: #efe8da;
+  --vmm-bg-hover: #ede5d6;
+  --vmm-accent: #b45309;
+  --vmm-accent-hover: #d97706;
+  --vmm-accent-text: #92400e;
+  --vmm-accent-400: #b45309;
+  --vmm-accent-soft: rgba(180, 83, 9, 0.12);
+  --vmm-accent-soft-strong: rgba(180, 83, 9, 0.22);
+  --vmm-accent-border: rgba(180, 83, 9, 0.32);
+}
+
+/* Apply surface variables across the app */
+:root[data-theme] body {
+  background-color: var(--vmm-bg-app);
+}
+
+:root[data-theme] .bg-\[\#0b0d12\],
+:root[data-theme] .bg-\[\#0e1015\],
+:root[data-theme] .bg-\[\#0e1015\]\/90,
+:root[data-theme] .bg-\[\#0e1015\]\/80,
+:root[data-theme] .bg-\[\#0e1015\]\/70,
+:root[data-theme] .bg-\[\#0e1015\]\/60,
+:root[data-theme] .bg-\[\#0e1015\]\/50 {
+  background-color: var(--vmm-bg-app) !important;
+}
+
+:root[data-theme] .bg-\[\#12151c\] {
+  background-color: var(--vmm-bg-sidebar) !important;
+}
+
+:root[data-theme] .bg-\[\#10131a\],
+:root[data-theme] .bg-\[\#10131b\],
+:root[data-theme] .bg-\[\#11131a\],
+:root[data-theme] .bg-\[\#11131a\]\/60,
+:root[data-theme] .bg-\[\#11141b\],
+:root[data-theme] .bg-\[\#13161f\],
+:root[data-theme] .bg-\[\#13161f\]\/60,
+:root[data-theme] .bg-\[\#141720\] {
+  background-color: var(--vmm-bg-surface) !important;
+}
+
+:root[data-theme] .bg-\[\#161922\],
+:root[data-theme] .bg-\[\#161922\]\/98,
+:root[data-theme] .bg-\[\#161a24\] {
+  background-color: var(--vmm-bg-card) !important;
+}
+
+:root[data-theme] .bg-\[\#171b26\],
+:root[data-theme] .bg-\[\#1c202c\],
+:root[data-theme] .bg-zinc-900 {
+  background-color: var(--vmm-bg-elevated) !important;
+}
+
+:root[data-theme] .bg-\[\#0f1117\] {
+  background-color: var(--vmm-bg-inset) !important;
+}
+
+:root[data-theme] .hover\:bg-\[\#171b26\]:hover {
+  background-color: var(--vmm-bg-hover) !important;
+}
+
+/* Featured card gradient stops */
+:root[data-theme] .via-\[\#141720\] {
+  --tw-gradient-via: var(--vmm-bg-surface) !important;
+}
+
+:root[data-theme] .to-\[\#12151c\] {
+  --tw-gradient-to: var(--vmm-bg-sidebar) !important;
+}
+
+:root[data-theme]:not([data-theme="forge-ember"]) .from-amber-500\/\[0\.09\] {
+  --tw-gradient-from: var(--vmm-accent-soft) !important;
+}
+
+/* Accent color mapping for non-default themes */
+:root[data-theme]:not([data-theme="forge-ember"]) .bg-amber-500 {
+  background-color: var(--vmm-accent) !important;
+}
+:root[data-theme]:not([data-theme="forge-ember"]) .hover\:bg-amber-400:hover {
+  background-color: var(--vmm-accent-hover) !important;
+}
+:root[data-theme]:not([data-theme="forge-ember"]) .bg-amber-400 {
+  background-color: var(--vmm-accent-400) !important;
+}
+:root[data-theme]:not([data-theme="forge-ember"]) .bg-amber-500\/10,
+:root[data-theme]:not([data-theme="forge-ember"]) .bg-amber-500\/12,
+:root[data-theme]:not([data-theme="forge-ember"]) .bg-amber-500\/15,
+:root[data-theme]:not([data-theme="forge-ember"]) .bg-amber-500\/\[0\.08\] {
+  background-color: var(--vmm-accent-soft) !important;
+}
+:root[data-theme]:not([data-theme="forge-ember"]) .hover\:bg-amber-500\/25:hover,
+:root[data-theme]:not([data-theme="forge-ember"]) .bg-amber-500\/20 {
+  background-color: var(--vmm-accent-soft-strong) !important;
+}
+:root[data-theme]:not([data-theme="forge-ember"]) .text-amber-300,
+:root[data-theme]:not([data-theme="forge-ember"]) .text-amber-200,
+:root[data-theme]:not([data-theme="forge-ember"]) .group:hover .group-hover\:text-amber-200 {
+  color: var(--vmm-accent-text) !important;
+}
+:root[data-theme]:not([data-theme="forge-ember"]) .text-amber-400 {
+  color: var(--vmm-accent-400) !important;
+}
+:root[data-theme]:not([data-theme="forge-ember"]) .border-amber-500\/20,
+:root[data-theme]:not([data-theme="forge-ember"]) .border-amber-500\/25,
+:root[data-theme]:not([data-theme="forge-ember"]) .border-amber-500\/30,
+:root[data-theme]:not([data-theme="forge-ember"]) .border-amber-500\/35,
+:root[data-theme]:not([data-theme="forge-ember"]) .border-amber-500\/40,
+:root[data-theme]:not([data-theme="forge-ember"]) .hover\:border-amber-500\/50:hover,
+:root[data-theme]:not([data-theme="forge-ember"]) .focus\:border-amber-500\/40:focus {
+  border-color: var(--vmm-accent-border) !important;
+}
+
+/* Seraph Light: readable ink text, warm borders, and light scrollbars */
+:root[data-theme="seraph-light"] body {
+  color: #1f1b16;
+}
+
+:root[data-theme="seraph-light"] .text-zinc-100,
+:root[data-theme="seraph-light"] .text-zinc-200 {
+  color: #1f1b16 !important;
+}
+
+:root[data-theme="seraph-light"] .text-zinc-300 {
+  color: #3a3228 !important;
+}
+
+:root[data-theme="seraph-light"] .text-zinc-400 {
+  color: #5c5143 !important;
+}
+
+:root[data-theme="seraph-light"] .text-zinc-500,
+:root[data-theme="seraph-light"] .text-zinc-600 {
+  color: #7a6d5d !important;
+}
+
+:root[data-theme="seraph-light"] .bg-amber-500.text-zinc-950 {
+  color: #fffaf0 !important;
+}
+
+:root[data-theme="seraph-light"] .border-white\/\[0\.03\],
+:root[data-theme="seraph-light"] .border-white\/\[0\.04\],
+:root[data-theme="seraph-light"] .border-white\/\[0\.05\],
+:root[data-theme="seraph-light"] .border-white\/\[0\.06\],
+:root[data-theme="seraph-light"] .border-white\/\[0\.07\],
+:root[data-theme="seraph-light"] .border-white\/\[0\.08\],
+:root[data-theme="seraph-light"] .border-white\/\[0\.1\],
+:root[data-theme="seraph-light"] .border-white\/\[0\.12\],
+:root[data-theme="seraph-light"] .border-white\/\[0\.14\],
+:root[data-theme="seraph-light"] .hover\:border-white\/\[0\.12\]:hover,
+:root[data-theme="seraph-light"] .hover\:border-white\/\[0\.14\]:hover,
+:root[data-theme="seraph-light"] .hover\:border-white\/\[0\.15\]:hover {
+  border-color: rgba(65, 50, 32, 0.16) !important;
+}
+
+:root[data-theme="seraph-light"] .bg-black\/30,
+:root[data-theme="seraph-light"] .bg-white\/\[0\.01\],
+:root[data-theme="seraph-light"] .bg-white\/\[0\.02\],
+:root[data-theme="seraph-light"] .bg-white\/\[0\.025\],
+:root[data-theme="seraph-light"] .bg-white\/\[0\.03\],
+:root[data-theme="seraph-light"] .bg-white\/\[0\.04\],
+:root[data-theme="seraph-light"] .bg-white\/\[0\.05\],
+:root[data-theme="seraph-light"] .bg-white\/\[0\.06\],
+:root[data-theme="seraph-light"] .bg-white\/\[0\.07\],
+:root[data-theme="seraph-light"] .hover\:bg-white\/\[0\.02\]:hover,
+:root[data-theme="seraph-light"] .hover\:bg-white\/\[0\.04\]:hover,
+:root[data-theme="seraph-light"] .hover\:bg-white\/\[0\.05\]:hover,
+:root[data-theme="seraph-light"] .hover\:bg-white\/\[0\.06\]:hover,
+:root[data-theme="seraph-light"] .hover\:bg-white\/\[0\.08\]:hover,
+:root[data-theme="seraph-light"] .hover\:bg-white\/\[0\.09\]:hover {
+  background-color: rgba(65, 50, 32, 0.06) !important;
+}
+
+:root[data-theme="seraph-light"] .text-rose-300,
+:root[data-theme="seraph-light"] .text-rose-200 {
+  color: #be123c !important;
+}
+
+:root[data-theme="seraph-light"] .text-emerald-200,
+:root[data-theme="seraph-light"] .text-emerald-300,
+:root[data-theme="seraph-light"] .text-emerald-400 {
+  color: #047857 !important;
+}
+
+:root[data-theme="seraph-light"] .mod-description-content {
+  color: #3a3228;
+}
+
+:root[data-theme="seraph-light"] .mod-description-content h1,
+:root[data-theme="seraph-light"] .mod-description-content h2,
+:root[data-theme="seraph-light"] .mod-description-content h3,
+:root[data-theme="seraph-light"] .mod-description-content h4,
+:root[data-theme="seraph-light"] .mod-description-content strong {
+  color: #1f1b16;
+}
+
+:root[data-theme="seraph-light"] .mod-description-content a {
+  color: #b45309;
+}
+
+:root[data-theme="seraph-light"] .mod-description-content code {
+  background: rgba(65, 50, 32, 0.08);
+  color: #92400e;
+}
+
+:root[data-theme="seraph-light"] .mod-description-content pre,
+:root[data-theme="seraph-light"] .mod-description-content .spoiler,
+:root[data-theme="seraph-light"] .mod-description-content details {
+  background: #efe8da;
+  border-color: rgba(65, 50, 32, 0.16);
+}
+
+:root[data-theme="seraph-light"] .mod-description-content .spoiler-title,
+:root[data-theme="seraph-light"] .mod-description-content summary {
+  color: #92400e;
+  background: rgba(65, 50, 32, 0.05);
+}
+
+:root[data-theme="seraph-light"] ::-webkit-scrollbar-thumb {
+  background: rgba(65, 50, 32, 0.22);
+}
+
+:root[data-theme="seraph-light"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(65, 50, 32, 0.36);
+}

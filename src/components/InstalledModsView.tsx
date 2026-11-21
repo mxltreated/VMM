@@ -14,6 +14,7 @@ import {
   evaluateDependenciesAgainstLocal,
   splitDependenciesMap,
 } from '../utils/dependencies';
+import { scoreSearchFields } from '../utils/search';
 import type { DownloadProgressEvent, LocalMod, ModConfigFile } from '../types';
 
 interface InstalledModsViewProps {
@@ -26,6 +27,7 @@ interface InstalledModsViewProps {
   onDeleteMod: (mod: LocalMod) => void;
   onUpdateMod: (mod: LocalMod) => Promise<void>;
   onConfigureMod: (relPath: string) => void;
+  onSelectMod: (mod: LocalMod) => void;
   onCheckUpdates: () => void;
   onOpenFolder: () => void;
 }
@@ -42,6 +44,7 @@ export function InstalledModsView({
   onDeleteMod,
   onUpdateMod,
   onConfigureMod,
+  onSelectMod,
   onCheckUpdates,
   onOpenFolder,
 }: InstalledModsViewProps) {
@@ -65,18 +68,28 @@ export function InstalledModsView({
   }, [mods]);
 
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return mods.filter((m) => {
+    const q = search.trim();
+    const base = mods.filter((m) => {
       if (filter === 'enabled' && !m.enabled) return false;
       if (filter === 'disabled' && m.enabled) return false;
       if (filter === 'updates' && !m.updateAvailable) return false;
-      if (!q) return true;
-      return (
-        m.name.toLowerCase().includes(q) ||
-        m.modid.toLowerCase().includes(q) ||
-        m.authors.some((a) => a.toLowerCase().includes(q))
-      );
+      return true;
     });
+    if (!q) return base;
+
+    return base
+      .map((m) => ({
+        mod: m,
+        score: scoreSearchFields(q, [
+          { text: m.name, weight: 3 },
+          { text: m.modid, weight: 2 },
+          { text: m.authors.join(' '), weight: 1 },
+          { text: m.description ?? '', weight: 0.5, allowFuzzy: false },
+        ]),
+      }))
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .map((entry) => entry.mod);
   }, [mods, search, filter]);
 
   return (
@@ -177,8 +190,9 @@ export function InstalledModsView({
               return (
                 <div
                   key={`${mod.enabled ? 'e' : 'd'}-${mod.filename}`}
+                  onClick={() => onSelectMod(mod)}
                   style={{ animationDelay: `${Math.min(idx * 20, 220)}ms` }}
-                  className={`animate-slide-up group flex items-center justify-between gap-4 p-3.5 rounded-xl border transition-all duration-150 ${
+                  className={`animate-slide-up group flex items-center justify-between gap-4 p-3.5 rounded-xl border transition-all duration-150 cursor-pointer ${
                     mod.enabled
                       ? 'bg-[#141720] border-white/[0.06] hover:border-white/[0.14] hover:bg-[#171b26]'
                       : 'bg-[#11131a]/60 border-white/[0.04] opacity-70 hover:opacity-100'
@@ -199,7 +213,7 @@ export function InstalledModsView({
 
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-zinc-100 truncate">
+                        <span className="text-sm font-medium text-zinc-100 group-hover:text-amber-200 transition-colors truncate">
                           {mod.name}
                         </span>
                         <span className="text-[11px] font-mono px-1.5 py-0.5 rounded bg-white/[0.05] text-zinc-400">
@@ -211,7 +225,10 @@ export function InstalledModsView({
                         />
                         {mod.updateAvailable && mod.latestVersion && (
                           <button
-                            onClick={() => setPendingUpdateMod(mod)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setPendingUpdateMod(mod);
+                            }}
                             disabled={Boolean(dl && !dl.done)}
                             title="View changelog and update"
                             className="flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 hover:bg-amber-500/25 transition-colors cursor-pointer"
@@ -236,7 +253,10 @@ export function InstalledModsView({
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-3 shrink-0">
+                  <div
+                    className="flex items-center gap-3 shrink-0"
+                    onClick={(e) => e.stopPropagation()}
+                  >
                     {matchedConfig && (
                       <button
                         onClick={() => onConfigureMod(matchedConfig.relPath)}

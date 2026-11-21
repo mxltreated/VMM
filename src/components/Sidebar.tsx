@@ -1,4 +1,5 @@
-import { Compass, Globe, Layers, Package, Settings, SlidersHorizontal, Flame } from 'lucide-react';
+import { useRef } from 'react';
+import { Compass, FileText, Globe, Layers, Package, Settings, SlidersHorizontal, Flame } from 'lucide-react';
 import type { GameStatus, NavTab } from '../types';
 
 interface SidebarProps {
@@ -7,6 +8,8 @@ interface SidebarProps {
   enabledCount: number;
   totalCount: number;
   gameStatus: GameStatus;
+  devMode?: boolean;
+  onUnlockDevMode?: () => void;
 }
 
 const NAV_ITEMS: { id: NavTab; label: string; icon: typeof Package }[] = [
@@ -15,6 +18,7 @@ const NAV_ITEMS: { id: NavTab; label: string; icon: typeof Package }[] = [
   { id: 'configs', label: 'Configs', icon: SlidersHorizontal },
   { id: 'profiles', label: 'Profiles', icon: Layers },
   { id: 'multiplayer', label: 'Multiplayer', icon: Globe },
+  { id: 'logs', label: 'Logs', icon: FileText },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
 
@@ -24,7 +28,29 @@ export function Sidebar({
   enabledCount,
   totalCount,
   gameStatus,
+  devMode = false,
+  onUnlockDevMode,
 }: SidebarProps) {
+  const settingsClicksRef = useRef(0);
+  const settingsResetTimerRef = useRef<number | null>(null);
+
+  const handleNavClick = (id: NavTab) => {
+    onSelectTab(id);
+    if (id !== 'settings' || devMode || !onUnlockDevMode) return;
+
+    if (settingsResetTimerRef.current !== null) {
+      window.clearTimeout(settingsResetTimerRef.current);
+    }
+    settingsClicksRef.current += 1;
+    if (settingsClicksRef.current >= 9) {
+      settingsClicksRef.current = 0;
+      onUnlockDevMode();
+      return;
+    }
+    settingsResetTimerRef.current = window.setTimeout(() => {
+      settingsClicksRef.current = 0;
+    }, 3000);
+  };
   return (
     <aside className="w-56 shrink-0 border-r border-white/[0.06] bg-[#12151c] flex flex-col justify-between select-none">
       <div>
@@ -37,7 +63,7 @@ export function Sidebar({
               Vintage Mod Manager
             </div>
             <div className="text-[11px] text-zinc-500 font-medium">
-              VMM • v1.2.0
+              VMM • v1.2.5
             </div>
           </div>
         </div>
@@ -49,7 +75,7 @@ export function Sidebar({
             return (
               <button
                 key={item.id}
-                onClick={() => onSelectTab(item.id)}
+                onClick={() => handleNavClick(item.id)}
                 className={`group w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-150 active:scale-[0.98] cursor-pointer ${
                   active
                     ? 'bg-amber-500/12 text-amber-300 border border-amber-500/20 shadow-sm shadow-amber-500/5'
@@ -62,6 +88,11 @@ export function Sidebar({
                   }`}
                 />
                 <span>{item.label}</span>
+                {item.id === 'settings' && devMode && (
+                  <span className="ml-auto text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/25">
+                    Dev
+                  </span>
+                )}
               </button>
             );
           })}

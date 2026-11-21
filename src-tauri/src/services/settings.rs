@@ -145,6 +145,7 @@ pub fn load_settings(config_dir: &Path) -> Result<AppSettings, String> {
             launch_args: None,
             auto_check_updates: false,
             github_repo: Some(OFFICIAL_GITHUB_REPO.to_string()),
+            theme: None,
         };
         save_settings(config_dir, &defaults)?;
         return Ok(defaults);

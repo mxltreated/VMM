@@ -9,6 +9,7 @@ import {
   Search,
   SlidersHorizontal,
 } from 'lucide-react';
+import { scoreSearchFields } from '../utils/search';
 import type { ModConfigFile } from '../types';
 
 interface ConfigsViewProps {
@@ -252,9 +253,16 @@ export function ConfigsView({
   }, [activeConfig]);
 
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    const q = search.trim();
     if (!q) return configs;
-    return configs.filter((c) => c.relPath.toLowerCase().includes(q));
+    return configs
+      .map((c) => ({
+        config: c,
+        score: scoreSearchFields(q, [{ text: c.relPath, weight: 1 }]),
+      }))
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .map((entry) => entry.config);
   }, [configs, search]);
 
   const parsedDraft = useMemo<{ ok: true; value: JsonValue } | { ok: false; err: string }>(() => {

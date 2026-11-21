@@ -1,15 +1,20 @@
 use crate::models::{
     AppSettings, AppUpdateInfo, BatchDownloadError, BatchDownloadItem, BatchDownloadResult,
-    DetectedPaths, DownloadProgressEvent, EnableModItem, GameStatus, LocalMod, ModConfigFile,
-    ModDbDetail, ModDbFilters, ModDbRelease, ModDbSummary, ModDependenciesSummary,
-    ModInstallPlan, ModProfile, ModpackImportPreview, ModpackImportResult, ModpackManifest,
-    P2pStatus, ProfileSettings, ServerConfigSummary, ServerLogEvent, ServerStatus,
+    CrashAnalysisReport, DetectedPaths, DownloadProgressEvent, EnableModItem, GameLogContent,
+    GameLogFile, GameStatus, LocalMod, ModConfigFile, ModDbDetail, ModDbFilters, ModDbRelease,
+    ModDbSummary, ModDependenciesSummary, ModInstallPlan, ModProfile, ModpackImportPreview,
+    ModpackImportResult, ModpackManifest, P2pStatus, ProfileSettings, ServerConfigSummary,
+    ServerLogEvent, ServerStatus,
 };
 use crate::services::dependencies::{
     inspect_mod_dependencies_batch as svc_inspect_mod_dependencies_batch,
     resolve_install_plan as svc_resolve_install_plan,
 };
 use crate::services::downloader::download_mod_file;
+use crate::services::game_logs::{
+    analyze_crash_logs as svc_analyze_crash_logs, list_game_logs as svc_list_game_logs,
+    logs_dir, read_game_log as svc_read_game_log,
+};
 use crate::services::launcher::GameLauncher;
 use crate::services::local_mods::{
     check_updates_for_mods, delete_mod as fs_delete_mod, mods_dir, scan_local_mods,
@@ -512,6 +517,39 @@ pub fn open_mod_configs_folder(app: AppHandle) -> Result<(), String> {
     app.opener()
         .open_path(dir.to_string_lossy().to_string(), None::<&str>)
         .map_err(|e| format!("Failed to open ModConfig folder: {e}"))
+}
+
+#[tauri::command]
+pub fn list_game_logs(app: AppHandle) -> Result<Vec<GameLogFile>, String> {
+    let cfg = config_dir(&app)?;
+    let (_, dp) = require_data_path(&cfg)?;
+    svc_list_game_logs(&dp)
+}
+
+#[tauri::command]
+pub fn read_game_log(app: AppHandle, rel_path: String) -> Result<GameLogContent, String> {
+    let cfg = config_dir(&app)?;
+    let (_, dp) = require_data_path(&cfg)?;
+    svc_read_game_log(&dp, &rel_path)
+}
+
+#[tauri::command]
+pub fn analyze_crash_logs(app: AppHandle) -> Result<CrashAnalysisReport, String> {
+    let cfg = config_dir(&app)?;
+    let (_, dp) = require_data_path(&cfg)?;
+    let local_mods = scan_local_mods(&dp).unwrap_or_default();
+    svc_analyze_crash_logs(&dp, &local_mods)
+}
+
+#[tauri::command]
+pub fn open_logs_folder(app: AppHandle) -> Result<(), String> {
+    let cfg = config_dir(&app)?;
+    let (_, dp) = require_data_path(&cfg)?;
+    let dir = logs_dir(&dp);
+    fs::create_dir_all(&dir).map_err(|e| format!("Failed to create Logs directory: {e}"))?;
+    app.opener()
+        .open_path(dir.to_string_lossy().to_string(), None::<&str>)
+        .map_err(|e| format!("Failed to open Logs folder: {e}"))
 }
 
 #[tauri::command]

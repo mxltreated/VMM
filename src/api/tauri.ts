@@ -5,9 +5,12 @@ import type {
   AppUpdateInfo,
   BatchDownloadItem,
   BatchDownloadResult,
+  CrashAnalysisReport,
   DetectedPaths,
   DownloadProgressEvent,
   EnableModItem,
+  GameLogContent,
+  GameLogFile,
   GameStatus,
   LocalMod,
   ModConfigFile,
@@ -120,6 +123,11 @@ export const api = {
   saveModConfig: (relPath: string, content: string) =>
     invoke<ModConfigFile>('save_mod_config', { relPath, content }),
   openModConfigsFolder: () => invoke<void>('open_mod_configs_folder'),
+  listGameLogs: () => invoke<GameLogFile[]>('list_game_logs'),
+  readGameLog: (relPath: string) =>
+    invoke<GameLogContent>('read_game_log', { relPath }),
+  analyzeCrashLogs: () => invoke<CrashAnalysisReport>('analyze_crash_logs'),
+  openLogsFolder: () => invoke<void>('open_logs_folder'),
   openDataFolder: () => invoke<void>('open_data_folder'),
   clearModDbCache: () => invoke<void>('clear_moddb_cache'),
 

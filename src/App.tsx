@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertCircle, Download, Loader2, X } from 'lucide-react';
+import { AlertCircle, Download, FileText, Loader2, X } from 'lucide-react';
 import { api } from './api/tauri';
+import { AppUpdateChangelogModal } from './components/AppUpdateChangelogModal';
 import { BrowseModsView } from './components/BrowseModsView';
 import { ConfigsView } from './components/ConfigsView';
 import { HeaderBar } from './components/HeaderBar';
 import { InstalledModsView } from './components/InstalledModsView';
 import { InstallWithDepsModal } from './components/InstallWithDepsModal';
+import { LogsView } from './components/LogsView';
 import { ModDetailDrawer } from './components/ModDetailDrawer';
 import { MultiplayerView } from './components/MultiplayerView';
 import { OnboardingModal } from './components/OnboardingModal';
 import { ProfilesView } from './components/ProfilesView';
 import { SettingsView } from './components/SettingsView';
 import { Sidebar } from './components/Sidebar';
+import { applyTheme, getStoredThemeId } from './utils/themes';
 import type {
   AppSettings,
   AppUpdateInfo,
@@ -41,8 +44,17 @@ export function App() {
     onboardingCompleted: true,
     launchArgs: null,
     autoCheckUpdates: false,
+    theme: getStoredThemeId(),
   });
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [showUpdateChangelog, setShowUpdateChangelog] = useState(false);
+  const [devMode, setDevMode] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem('vmm_dev_mode') === '1';
+    } catch {
+      return false;
+    }
+  });
   const [localMods, setLocalMods] = useState<LocalMod[]>([]);
   const [modConfigs, setModConfigs] = useState<ModConfigFile[]>([]);
   const [selectedConfigPath, setSelectedConfigPath] = useState<string | null>(null);
@@ -90,6 +102,12 @@ export function App() {
       setModConfigs([]);
     }
   }, []);
+
+  useEffect(() => {
+    if (settings.theme) {
+      applyTheme(settings.theme);
+    }
+  }, [settings.theme]);
 
   useEffect(() => {
     (async () => {
@@ -384,6 +402,27 @@ export function App() {
     }
   };
 
+  const openInstalledModDetail = (mod: LocalMod) => {
+    setSelectedMod({
+      modid: 0,
+      assetid: null,
+      downloads: null,
+      follows: null,
+      trendingpoints: null,
+      comments: null,
+      name: mod.name,
+      summary: mod.description || null,
+      modidstrs: mod.modid ? [mod.modid] : [],
+      author: mod.authors.join(', ') || null,
+      urlalias: null,
+      side: mod.side || null,
+      modType: null,
+      logo: null,
+      tags: [],
+      lastreleased: null,
+    });
+  };
+
   return (
     <div className="h-screen w-screen flex bg-[#0e1015] text-zinc-100 overflow-hidden">
       <Sidebar
@@ -392,6 +431,15 @@ export function App() {
         enabledCount={enabledCount}
         totalCount={localMods.length}
         gameStatus={gameStatus}
+        devMode={devMode}
+        onUnlockDevMode={() => {
+          setDevMode(true);
+          try {
+            window.localStorage.setItem('vmm_dev_mode', '1');
+          } catch {
+            // ignore storage errors
+          }
+        }}
       />
 
       <div className="flex-1 flex flex-col min-w-0">
@@ -414,6 +462,14 @@ export function App() {
               </span>
             </div>
             <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowUpdateChangelog(true)}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-200 font-medium cursor-pointer"
+              >
+                <FileText className="w-3 h-3" />
+                <span>Changelog</span>
+              </button>
               <button
                 disabled={installingUpdate}
                 onClick={async () => {
@@ -471,6 +527,7 @@ export function App() {
               onDeleteMod={handleDeleteMod}
               onUpdateMod={handleUpdateMod}
               onConfigureMod={handleConfigureMod}
+              onSelectMod={openInstalledModDetail}
               onCheckUpdates={handleCheckUpdates}
               onOpenFolder={() => api.openModsFolder().catch((e) => setBannerError(String(e)))}
             />
@@ -527,17 +584,42 @@ export function App() {
             />
           )}
 
+          {activeTab === 'logs' && (
+            <LogsView
+              installedMods={localMods}
+              onToggleMod={handleToggleMod}
+              onSelectInstalledMod={openInstalledModDetail}
+            />
+          )}
+
           {activeTab === 'settings' && (
             <SettingsView
               settings={settings}
               onSaveSettings={handleSaveSettings}
               onOpenOnboarding={() => setShowOnboarding(true)}
+              onResetOnboarding={async () => {
+                await handleSaveSettings({
+                  ...settings,
+                  onboardingCompleted: false,
+                });
+                setShowOnboarding(true);
+              }}
+              onRefreshMods={refreshLocalMods}
+              devMode={devMode}
+              onDisableDevMode={() => {
+                setDevMode(false);
+                try {
+                  window.localStorage.removeItem('vmm_dev_mode');
+                } catch {
+                  // ignore storage errors
+                }
+              }}
             />
           )}
         </main>
 
         <footer className="h-7 shrink-0 border-t border-white/[0.04] bg-[#0e1015]/90 px-6 flex items-center justify-between text-[11px] text-zinc-600 select-none">
-          <span>Vintage Mod Manager (VMM) • v1.2.0</span>
+          <span>Vintage Mod Manager (VMM) • v1.2.5</span>
           <span>Modpack Sharing &amp; Encrypted P2P Multiplayer</span>
         </footer>
       </div>
@@ -559,6 +641,27 @@ export function App() {
           downloads={downloads}
           onClose={() => setPendingInstallPlan(null)}
           onConfirmInstall={handleConfirmBatchInstall}
+        />
+      )}
+
+      {showUpdateChangelog && appUpdate && (
+        <AppUpdateChangelogModal
+          updateInfo={appUpdate}
+          installing={installingUpdate}
+          onClose={() => setShowUpdateChangelog(false)}
+          onInstall={async () => {
+            if (!appUpdate.downloadUrl) {
+              await api.openExternalUrl(appUpdate.htmlUrl);
+              return;
+            }
+            setInstallingUpdate(true);
+            try {
+              await api.installAppUpdate(appUpdate.latestVersion);
+            } catch (err) {
+              setBannerError(err instanceof Error ? err.message : String(err));
+              setInstallingUpdate(false);
+            }
+          }}
         />
       )}
 

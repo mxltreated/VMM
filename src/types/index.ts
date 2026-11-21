@@ -1,3 +1,10 @@
+export type ThemeId =
+  | 'forge-ember'
+  | 'temporal-rift'
+  | 'seraph-light'
+  | 'rustworks'
+  | 'redwood-forest';
+
 export interface AppSettings {
   gameExePath: string | null;
   dataPath: string | null;
@@ -7,6 +14,7 @@ export interface AppSettings {
   launchArgs: string | null;
   autoCheckUpdates: boolean;
   githubRepo?: string | null;
+  theme?: string | null;
 }
 
 export interface DetectedPaths {
@@ -146,6 +154,7 @@ export type NavTab =
   | 'configs'
   | 'profiles'
   | 'multiplayer'
+  | 'logs'
   | 'settings';
 
 export interface ModpackModEntry {
@@ -286,4 +295,40 @@ export interface BatchDownloadResult {
   succeeded: string[];
   enabled: string[];
   failed: BatchDownloadError[];
+}
+
+export interface GameLogFile {
+  filename: string;
+  relPath: string;
+  sizeBytes: number;
+  modifiedMs: number;
+  isCrash: boolean;
+  category: 'crash' | 'client' | 'server' | 'other' | string;
+}
+
+export interface GameLogContent {
+  relPath: string;
+  content: string;
+  sizeBytes: number;
+  truncated: boolean;
+  lineCount: number;
+}
+
+export interface CrashSuspect {
+  modid: string;
+  modName: string;
+  filename: string | null;
+  enabled: boolean | null;
+  confidence: 'high' | 'medium' | 'low' | string;
+  reasons: string[];
+  sampleLines: string[];
+}
+
+export interface CrashAnalysisReport {
+  crashDetected: boolean;
+  headline: string;
+  exceptionSummary: string | null;
+  analyzedFiles: string[];
+  suspects: CrashSuspect[];
+  recommendations: string[];
 }

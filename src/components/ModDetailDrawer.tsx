@@ -115,11 +115,23 @@ export function ModDetailDrawer({
       return;
     }
 
+    const lookupKey =
+      modSummary.modid > 0
+        ? String(modSummary.modid)
+        : (modSummary.modidstrs[0] ?? '').trim();
+
+    if (!lookupKey) {
+      setDetail(null);
+      setLoading(false);
+      setError('This mod does not have a Mod DB ID.');
+      return;
+    }
+
     let cancelled = false;
     setLoading(true);
     setError(null);
     api
-      .getModDbDetail(String(modSummary.modid))
+      .getModDbDetail(lookupKey)
       .then((d) => {
         if (cancelled) return;
         setDetail(d);
@@ -211,12 +223,18 @@ export function ModDetailDrawer({
   const totalDownloads = detail?.downloads ?? modSummary.downloads;
   const totalFollows = detail?.follows ?? modSummary.follows;
   const safeSummaryLogo = isSafeHttpUrl(modSummary.logo);
+  const fallbackAsset =
+    detail?.assetid ??
+    modSummary.assetid ??
+    (modSummary.modid > 0 ? modSummary.modid : null);
   const rawAlias = (
     detail?.urlalias ||
     modSummary.urlalias ||
-    `show/mod/${detail?.assetid ?? modSummary.assetid ?? modSummary.modid}`
+    (fallbackAsset !== null ? `show/mod/${fallbackAsset}` : '')
   ).replace(/^\/+/, '');
-  const candidateModDbUrl = isSafeHttpUrl(`${MODDB_ORIGIN}/${rawAlias}`);
+  const candidateModDbUrl = rawAlias
+    ? isSafeHttpUrl(`${MODDB_ORIGIN}/${rawAlias}`)
+    : null;
   const modDbUrl =
     candidateModDbUrl && candidateModDbUrl.startsWith(`${MODDB_ORIGIN}/`)
       ? candidateModDbUrl

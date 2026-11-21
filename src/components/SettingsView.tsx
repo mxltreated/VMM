@@ -1,29 +1,43 @@
 import { useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import {
+  Bug,
   Check,
+  Copy,
   Download,
   FolderOpen,
   Loader2,
+  Lock,
+  Palette,
   RefreshCw,
+  RotateCcw,
   Sparkles,
   Terminal,
   Trash2,
   Wand2,
 } from 'lucide-react';
 import { api } from '../api/tauri';
+import { applyTheme, resolveThemeId, THEME_PRESETS } from '../utils/themes';
 import type { AppSettings, AppUpdateInfo } from '../types';
 
 interface SettingsViewProps {
   settings: AppSettings;
   onSaveSettings: (next: AppSettings) => Promise<void>;
   onOpenOnboarding: () => void;
+  onResetOnboarding?: () => Promise<void> | void;
+  onRefreshMods?: () => Promise<void> | void;
+  devMode?: boolean;
+  onDisableDevMode?: () => void;
 }
 
 export function SettingsView({
   settings,
   onSaveSettings,
   onOpenOnboarding,
+  onResetOnboarding,
+  onRefreshMods,
+  devMode = false,
+  onDisableDevMode,
 }: SettingsViewProps) {
   const [gameExePath, setGameExePath] = useState(settings.gameExePath ?? '');
   const [dataPath, setDataPath] = useState(settings.dataPath ?? '');
@@ -38,6 +52,8 @@ export function SettingsView({
   const [installingAppUpdate, setInstallingAppUpdate] = useState(false);
   const [appUpdateInfo, setAppUpdateInfo] = useState<AppUpdateInfo | null>(null);
   const [appUpdateErr, setAppUpdateErr] = useState<string | null>(null);
+  const [copiedDiag, setCopiedDiag] = useState(false);
+  const [rescanningMods, setRescanningMods] = useState(false);
 
   const pickExe = async () => {
     const selected = await open({
@@ -199,14 +215,6 @@ export function SettingsView({
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={onOpenOnboarding}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/[0.05] hover:bg-white/[0.09] text-xs font-medium text-zinc-300 transition-colors active:scale-[0.98] cursor-pointer"
-            >
-              <Wand2 className="w-3.5 h-3.5 text-amber-400" />
-              <span>Run Setup Wizard</span>
-            </button>
-            <button
-              type="button"
               onClick={handleAutoDetect}
               className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/[0.05] hover:bg-white/[0.09] text-xs font-medium text-zinc-300 transition-colors active:scale-[0.98] cursor-pointer"
             >
@@ -233,61 +241,119 @@ export function SettingsView({
         </div>
       </form>
 
+      {/* Appearance / Themes */}
+      <div className="p-6 rounded-2xl bg-[#141720] border border-white/[0.06] space-y-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
+              <Palette className="w-4 h-4 text-amber-400" />
+              <span>Appearance</span>
+            </h2>
+            <p className="text-xs text-zinc-500 mt-1">
+              Choose one of the 5 Vintage Story-inspired starter themes. Changes apply immediately.
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+          {THEME_PRESETS.map((preset) => {
+            const active = resolveThemeId(settings.theme) === preset.id;
+            return (
+              <button
+                key={preset.id}
+                type="button"
+                onClick={() => {
+                  applyTheme(preset.id);
+                  void onSaveSettings({ ...settings, theme: preset.id });
+                }}
+                className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex flex-col gap-2 ${
+                  active
+                    ? 'bg-amber-500/[0.08] border-amber-500/40'
+                    : 'bg-[#161922] border-white/[0.06] hover:border-white/[0.14]'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold text-zinc-100 truncate">
+                    {preset.name}
+                  </span>
+                  {active && (
+                    <Check className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                  )}
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  <span
+                    className="w-5 h-5 rounded-md border border-black/20"
+                    style={{ backgroundColor: preset.swatches.bg }}
+                    title="Background"
+                  />
+                  <span
+                    className="w-5 h-5 rounded-md border border-black/20"
+                    style={{ backgroundColor: preset.swatches.surface }}
+                    title="Surface"
+                  />
+                  <span
+                    className="w-5 h-5 rounded-md border border-black/20"
+                    style={{ backgroundColor: preset.swatches.accent }}
+                    title="Accent"
+                  />
+                  <span className="ml-auto text-[10px] text-zinc-500">
+                    {preset.isLight ? 'Light' : 'Dark'}
+                  </span>
+                </div>
+
+                <p className="text-[11px] text-zinc-400 leading-snug">
+                  {preset.description}
+                </p>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Storage & Folder Shortcuts */}
       <div className="p-6 rounded-2xl bg-[#141720] border border-white/[0.06] space-y-4">
         <div>
           <h2 className="text-sm font-semibold text-zinc-100">
-            Folders &amp; Cache
+            Folders
           </h2>
           <p className="text-xs text-zinc-500 mt-1">
-            Quick shortcuts to your Vintage Story directories and Mod DB cache.
+            Quick shortcuts to your Vintage Story directories.
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => api.openModsFolder()}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#1c202c] hover:bg-white/[0.08] border border-white/[0.07] text-xs text-zinc-200 active:scale-[0.98] cursor-pointer"
-            >
-              <FolderOpen className="w-3.5 h-3.5 text-zinc-400" />
-              <span>Mods</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => api.openModConfigsFolder()}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#1c202c] hover:bg-white/[0.08] border border-white/[0.07] text-xs text-zinc-200 active:scale-[0.98] cursor-pointer"
-            >
-              <FolderOpen className="w-3.5 h-3.5 text-zinc-400" />
-              <span>ModConfig</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => api.openDataFolder()}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#1c202c] hover:bg-white/[0.08] border border-white/[0.07] text-xs text-zinc-200 active:scale-[0.98] cursor-pointer"
-            >
-              <FolderOpen className="w-3.5 h-3.5 text-zinc-400" />
-              <span>Data Folder</span>
-            </button>
-          </div>
-
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={handleClearCache}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/[0.05] hover:bg-rose-500/15 hover:text-rose-300 border border-white/[0.07] text-xs font-medium text-zinc-300 transition-colors active:scale-[0.98] cursor-pointer"
+            onClick={() => api.openModsFolder()}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#1c202c] hover:bg-white/[0.08] border border-white/[0.07] text-xs text-zinc-200 active:scale-[0.98] cursor-pointer"
           >
-            {cacheCleared ? (
-              <>
-                <Check className="w-3.5 h-3.5 text-emerald-400" />
-                <span className="text-emerald-400">Cache Cleared</span>
-              </>
-            ) : (
-              <>
-                <Trash2 className="w-3.5 h-3.5" />
-                <span>Clear Mod DB Cache</span>
-              </>
-            )}
+            <FolderOpen className="w-3.5 h-3.5 text-zinc-400" />
+            <span>Mods</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => api.openModConfigsFolder()}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#1c202c] hover:bg-white/[0.08] border border-white/[0.07] text-xs text-zinc-200 active:scale-[0.98] cursor-pointer"
+          >
+            <FolderOpen className="w-3.5 h-3.5 text-zinc-400" />
+            <span>ModConfig</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => api.openLogsFolder()}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#1c202c] hover:bg-white/[0.08] border border-white/[0.07] text-xs text-zinc-200 active:scale-[0.98] cursor-pointer"
+          >
+            <FolderOpen className="w-3.5 h-3.5 text-zinc-400" />
+            <span>Logs</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => api.openDataFolder()}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#1c202c] hover:bg-white/[0.08] border border-white/[0.07] text-xs text-zinc-200 active:scale-[0.98] cursor-pointer"
+          >
+            <FolderOpen className="w-3.5 h-3.5 text-zinc-400" />
+            <span>Data Folder</span>
           </button>
         </div>
       </div>
@@ -389,6 +455,132 @@ export function SettingsView({
           </div>
         )}
       </div>
+
+      {devMode && (
+        <div className="animate-slide-up p-6 rounded-2xl bg-[#141720] border border-amber-500/30 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-amber-300 flex items-center gap-2">
+                <Bug className="w-4 h-4" />
+                <span>Developer Mode</span>
+              </h2>
+              <p className="text-xs text-zinc-400 mt-0.5">
+                Internal tools for testing onboarding, resetting caches, and diagnostics.
+              </p>
+            </div>
+
+            {onDisableDevMode && (
+              <button
+                type="button"
+                onClick={onDisableDevMode}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/[0.05] hover:bg-white/[0.09] border border-white/[0.07] text-[11px] font-medium text-zinc-300 cursor-pointer"
+              >
+                <Lock className="w-3 h-3" />
+                <span>Lock Developer Mode</span>
+              </button>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={onOpenOnboarding}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/[0.05] hover:bg-white/[0.09] border border-white/[0.07] text-xs font-medium text-zinc-200 cursor-pointer"
+            >
+              <Wand2 className="w-3.5 h-3.5 text-amber-400" />
+              <span>Preview Onboarding Wizard</span>
+            </button>
+
+            {onResetOnboarding && (
+              <button
+                type="button"
+                onClick={() => void onResetOnboarding()}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-xs font-medium text-amber-300 cursor-pointer"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Reset Onboarding State</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={handleClearCache}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/[0.05] hover:bg-rose-500/15 hover:text-rose-300 border border-white/[0.07] text-xs font-medium text-zinc-300 transition-colors cursor-pointer"
+            >
+              {cacheCleared ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="text-emerald-400">Cache Cleared</span>
+                </>
+              ) : (
+                <>
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Clear Mod DB Cache</span>
+                </>
+              )}
+            </button>
+
+            {onRefreshMods && (
+              <button
+                type="button"
+                disabled={rescanningMods}
+                onClick={async () => {
+                  setRescanningMods(true);
+                  try {
+                    await onRefreshMods();
+                  } finally {
+                    setRescanningMods(false);
+                  }
+                }}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/[0.05] hover:bg-white/[0.09] border border-white/[0.07] text-xs font-medium text-zinc-200 cursor-pointer disabled:opacity-50"
+              >
+                <RefreshCw
+                  className={`w-3.5 h-3.5 text-zinc-400 ${
+                    rescanningMods ? 'animate-spin' : ''
+                  }`}
+                />
+                <span>Force Rescan Mods</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(
+                    JSON.stringify(
+                      {
+                        settings,
+                        userAgent: navigator.userAgent,
+                        timestamp: new Date().toISOString(),
+                      },
+                      null,
+                      2
+                    )
+                  );
+                  setCopiedDiag(true);
+                  setTimeout(() => setCopiedDiag(false), 2000);
+                } catch {
+                  // ignore clipboard errors
+                }
+              }}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/[0.05] hover:bg-white/[0.09] border border-white/[0.07] text-xs font-medium text-zinc-200 cursor-pointer"
+            >
+              {copiedDiag ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="text-emerald-400">Copied Diagnostics</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3.5 h-3.5 text-zinc-400" />
+                  <span>Copy Diagnostics JSON</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

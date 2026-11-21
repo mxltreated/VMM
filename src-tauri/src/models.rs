@@ -16,6 +16,8 @@ pub struct AppSettings {
     pub auto_check_updates: bool,
     #[serde(default)]
     pub github_repo: Option<String>,
+    #[serde(default)]
+    pub theme: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -418,4 +420,48 @@ pub struct BatchDownloadResult {
     pub succeeded: Vec<String>,
     pub enabled: Vec<String>,
     pub failed: Vec<BatchDownloadError>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GameLogFile {
+    pub filename: String,
+    pub rel_path: String,
+    pub size_bytes: u64,
+    pub modified_ms: u64,
+    pub is_crash: bool,
+    pub category: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GameLogContent {
+    pub rel_path: String,
+    pub content: String,
+    pub size_bytes: u64,
+    pub truncated: bool,
+    pub line_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CrashSuspect {
+    pub modid: String,
+    pub mod_name: String,
+    pub filename: Option<String>,
+    pub enabled: Option<bool>,
+    pub confidence: String, // "high" | "medium" | "low"
+    pub reasons: Vec<String>,
+    pub sample_lines: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CrashAnalysisReport {
+    pub crash_detected: bool,
+    pub headline: String,
+    pub exception_summary: Option<String>,
+    pub analyzed_files: Vec<String>,
+    pub suspects: Vec<CrashSuspect>,
+    pub recommendations: Vec<String>,
 }

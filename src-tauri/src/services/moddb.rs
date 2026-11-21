@@ -225,60 +225,76 @@ impl ModDbClient {
         order_by: Option<&str>,
         force_refresh: bool,
     ) -> Result<Vec<ModDbSummary>, String> {
-        let key = Self::make_list_key(text, tag_ids, game_version_id, order_by);
+        let query_text = text.unwrap_or("").trim();
+        // Fetch and cache the full list for (tag_ids, game_version_id, order_by) without `text`
+        // so local fuzzy/relevance search works across non-identical text and avoids per-keystroke
+        // network requests.
+        let key = Self::make_list_key(None, tag_ids, game_version_id, order_by);
 
-        if !force_refresh {
+        let base_mods = if !force_refresh {
             let guard = self.cache.read().await;
-            if let Some(entry) = guard.lists.get(&key) {
-                if entry.is_fresh(LIST_TTL_SECS) {
-                    return Ok(entry.data.clone());
+            guard
+                .lists
+                .get(&key)
+                .filter(|entry| entry.is_fresh(LIST_TTL_SECS))
+                .map(|entry| entry.data.clone())
+        } else {
+            None
+        };
+
+        let all_mods = match base_mods {
+            Some(cached) => cached,
+            None => {
+                let mut params: Vec<(String, String)> = Vec::new();
+                for tid in tag_ids {
+                    params.push(("tagids[]".to_string(), tid.to_string()));
                 }
+                if let Some(gv) = game_version_id {
+                    params.push(("gameversions[]".to_string(), gv.to_string()));
+                }
+                if let Some(order) = order_by {
+                    if !order.trim().is_empty() {
+                        params.push(("orderby".to_string(), order.to_string()));
+                    }
+                }
+
+                let resp = self
+                    .client
+                    .get(format!("{BASE_URL}/mods"))
+                    .query(&params)
+                    .send()
+                    .await
+                    .map_err(|e| format!("Mod DB request failed: {e}"))?;
+
+                let parsed: ModDbListResponse =
+                    read_bounded_json_response(resp, "Mod DB response").await?;
+
+                {
+                    let mut guard = self.cache.write().await;
+                    guard.lists.insert(
+                        key,
+                        CacheEntry {
+                            fetched_at: now_secs(),
+                            data: parsed.mods.clone(),
+                        },
+                    );
+                    prune_cache(&mut guard);
+                }
+                self.persist_cache().await;
+
+                parsed.mods
             }
-        }
+        };
 
-        let mut params: Vec<(String, String)> = Vec::new();
-        if let Some(q) = text {
-            let trimmed = q.trim();
-            if !trimmed.is_empty() {
-                params.push(("text".to_string(), trimmed.to_string()));
-            }
+        if query_text.is_empty() {
+            Ok(all_mods)
+        } else {
+            Ok(crate::services::mod_search::filter_and_rank_mods(
+                &all_mods,
+                query_text,
+                order_by,
+            ))
         }
-        for tid in tag_ids {
-            params.push(("tagids[]".to_string(), tid.to_string()));
-        }
-        if let Some(gv) = game_version_id {
-            params.push(("gameversions[]".to_string(), gv.to_string()));
-        }
-        if let Some(order) = order_by {
-            if !order.trim().is_empty() {
-                params.push(("orderby".to_string(), order.to_string()));
-            }
-        }
-
-        let resp = self
-            .client
-            .get(format!("{BASE_URL}/mods"))
-            .query(&params)
-            .send()
-            .await
-            .map_err(|e| format!("Mod DB request failed: {e}"))?;
-
-        let parsed: ModDbListResponse = read_bounded_json_response(resp, "Mod DB response").await?;
-
-        {
-            let mut guard = self.cache.write().await;
-            guard.lists.insert(
-                key,
-                CacheEntry {
-                    fetched_at: now_secs(),
-                    data: parsed.mods.clone(),
-                },
-            );
-            prune_cache(&mut guard);
-        }
-        self.persist_cache().await;
-
-        Ok(parsed.mods)
     }
 
     pub async fn get_mod_detail(&self, modid_or_str: &str) -> Result<ModDbDetail, String> {

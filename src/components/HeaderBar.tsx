@@ -32,6 +32,10 @@ const TAB_TITLES: Record<NavTab, { title: string; subtitle: string }> = {
     title: 'Multiplayer & P2P',
     subtitle: 'Host or join a zero-download, encrypted peer-to-peer Vintage Story room',
   },
+  logs: {
+    title: 'Game Logs & Crash Assistant',
+    subtitle: 'Inspect client/server logs and detect mods causing crashes or errors',
+  },
   settings: {
     title: 'Settings',
     subtitle: 'Configure game executable and data directory',

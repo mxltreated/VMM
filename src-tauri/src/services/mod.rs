@@ -1,8 +1,10 @@
 pub mod dependencies;
 pub mod downloader;
+pub mod game_logs;
 pub mod launcher;
 pub mod local_mods;
 pub mod mod_configs;
+pub mod mod_search;
 pub mod moddb;
 pub mod modpack;
 pub mod multiplayer;

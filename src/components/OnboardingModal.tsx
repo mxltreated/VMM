@@ -4,15 +4,17 @@ import {
   ArrowLeft,
   ArrowRight,
   Check,
+  Compass,
   Flame,
   FolderOpen,
+  Globe,
   Layers,
-  Package,
-  SlidersHorizontal,
+  ShieldAlert,
   Sparkles,
 } from 'lucide-react';
 import { api } from '../api/tauri';
-import type { AppSettings } from '../types';
+import { applyTheme, resolveThemeId, THEME_PRESETS } from '../utils/themes';
+import type { AppSettings, ThemeId } from '../types';
 
 interface OnboardingModalProps {
   settings: AppSettings;
@@ -30,6 +32,9 @@ export function OnboardingModal({
   const [dataPath, setDataPath] = useState(settings.dataPath ?? '');
   const [selectedProfile, setSelectedProfile] = useState<string>(
     settings.activeProfileId ?? 'default'
+  );
+  const [selectedTheme, setSelectedTheme] = useState<ThemeId>(() =>
+    resolveThemeId(settings.theme)
   );
   const [submitting, setSubmitting] = useState(false);
 
@@ -67,6 +72,7 @@ export function OnboardingModal({
           ...settings,
           gameExePath: gameExePath.trim() || null,
           dataPath: dataPath.trim() || null,
+          theme: selectedTheme,
           onboardingCompleted: true,
         },
         selectedProfile
@@ -78,7 +84,7 @@ export function OnboardingModal({
 
   return (
     <div className="animate-fade-in fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-sm p-4">
-      <div className="animate-scale-in w-full max-w-lg rounded-2xl bg-[#12151c] border border-white/[0.1] shadow-2xl overflow-hidden">
+      <div className="animate-scale-in w-full max-w-xl rounded-2xl bg-[#12151c] border border-white/[0.1] shadow-2xl overflow-hidden">
         {/* Header */}
         <div className="px-6 pt-6 pb-4 border-b border-white/[0.06] flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -91,11 +97,11 @@ export function OnboardingModal({
                   Welcome to Vintage Mod Manager
                 </h2>
                 <span className="text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/25">
-                  Alpha 1.0
+                  v1.2.5
                 </span>
               </div>
               <p className="text-xs text-zinc-500">
-                Early alpha build • Step {step} of 3
+                Quick setup • Step {step} of 3
               </p>
             </div>
           </div>
@@ -258,6 +264,51 @@ export function OnboardingModal({
                   )}
                 </button>
               </div>
+
+              <div className="pt-2 border-t border-white/[0.06] space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-zinc-300">
+                    Choose a Theme
+                  </span>
+                  <span className="text-[11px] text-zinc-500">
+                    Can be changed anytime in Settings
+                  </span>
+                </div>
+                <div className="grid grid-cols-5 gap-2">
+                  {THEME_PRESETS.map((preset) => {
+                    const active = selectedTheme === preset.id;
+                    return (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedTheme(preset.id);
+                          applyTheme(preset.id);
+                        }}
+                        className={`p-2 rounded-lg border text-left transition-all cursor-pointer ${
+                          active
+                            ? 'bg-amber-500/[0.08] border-amber-500/40'
+                            : 'bg-[#161922] border-white/[0.06] hover:border-white/[0.14]'
+                        }`}
+                      >
+                        <div className="flex items-center gap-1 mb-1">
+                          <span
+                            className="w-3 h-3 rounded-sm border border-black/20"
+                            style={{ backgroundColor: preset.swatches.bg }}
+                          />
+                          <span
+                            className="w-3 h-3 rounded-sm border border-black/20"
+                            style={{ backgroundColor: preset.swatches.accent }}
+                          />
+                        </div>
+                        <div className="text-[10px] font-medium text-zinc-200 truncate">
+                          {preset.name}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
           )}
 
@@ -268,31 +319,43 @@ export function OnboardingModal({
                   You&apos;re Ready to Mod
                 </h3>
                 <p className="text-xs text-zinc-400 mt-0.5">
-                  A quick look at how everything fits together:
+                  A quick look at what&apos;s built into VMM:
                 </p>
               </div>
 
-              <div className="space-y-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 <div className="p-3.5 rounded-xl bg-[#161922] border border-white/[0.06] flex items-start gap-3">
-                  <Package className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <Compass className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
                   <div>
                     <div className="text-xs font-semibold text-zinc-100">
-                      Safe Enable / Disable
+                      Smart Search & Mod Pages
                     </div>
                     <p className="text-[11px] text-zinc-400 mt-0.5">
-                      Toggling a mod off moves it to <span className="font-mono text-zinc-300">ModsDisabled/</span> instead of deleting it.
+                      Fuzzy, relevance-ranked Mod DB search—and click any installed mod to inspect its Mod DB page & dependencies.
                     </p>
                   </div>
                 </div>
 
                 <div className="p-3.5 rounded-xl bg-[#161922] border border-white/[0.06] flex items-start gap-3">
-                  <SlidersHorizontal className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
                   <div>
                     <div className="text-xs font-semibold text-zinc-100">
-                      Pre-Boot Mod Configs
+                      Logs & Crash Assistant
                     </div>
                     <p className="text-[11px] text-zinc-400 mt-0.5">
-                      Tweak <span className="font-mono text-zinc-300">ModConfig/*.json</span> values in Form or JSON mode before launching.
+                      Browse client/server logs and automatically spot suspect mods behind crashes with one-click disable.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="p-3.5 rounded-xl bg-[#161922] border border-white/[0.06] flex items-start gap-3">
+                  <Globe className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <div>
+                    <div className="text-xs font-semibold text-zinc-100">
+                      P2P Multiplayer & Modpacks
+                    </div>
+                    <p className="text-[11px] text-zinc-400 mt-0.5">
+                      Host or join encrypted peer-to-peer rooms and share curated modpacks with friends.
                     </p>
                   </div>
                 </div>
@@ -301,10 +364,10 @@ export function OnboardingModal({
                   <Layers className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
                   <div>
                     <div className="text-xs font-semibold text-zinc-100">
-                      Instant Profiles
+                      Safe Profiles & Configs
                     </div>
                     <p className="text-[11px] text-zinc-400 mt-0.5">
-                      Create and switch mod sets anytime from the top bar without duplicating files.
+                      Switch profiles via <span className="font-mono text-zinc-300">ModsDisabled/</span> and edit <span className="font-mono text-zinc-300">ModConfig/*.json</span> before launching.
                     </p>
                   </div>
                 </div>
